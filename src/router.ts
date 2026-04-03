@@ -439,17 +439,27 @@ export function createRouter<Shared>(config: {
     resolved: Exclude<Resolved, { notFound: true }>,
   ): RouterModel<Shared> | readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>] {
     const cache = new Map(model._cache);
+    const redirected =
+      resolved.finalUrl.pathname !== url.pathname ||
+      resolved.finalUrl.search !== url.search;
+    const cacheKey = resolved.finalUrl.pathname + resolved.finalUrl.search;
+    const redirectEffects: Effect<RouterMsg<Shared>>[] = redirected
+      ? [
+          navFxEffect(
+            resolved.finalUrl.pathname + resolved.finalUrl.search,
+            true,
+          ) as Effect<any>,
+        ]
+      : [];
 
     // Save current page
     if (model._page) {
       const cfg = getConfig(model._page.routeIdx);
       if (cfg?.save) {
-        const saved = cfg.save(model._page.model);
+        const saved = cfg.save(model._page.model as any);
         if (saved !== undefined) cache.set(model._page.key, saved);
       }
     }
-
-    const cacheKey = resolved.finalUrl.pathname;
 
     // Same page check — return exact same reference to avoid re-render
     if (
@@ -457,7 +467,7 @@ export function createRouter<Shared>(config: {
       model._page.key === cacheKey &&
       model._page.routeIdx === resolved.routeIdx
     ) {
-      return model;
+      return redirectEffects.length > 0 ? [model, redirectEffects] : model;
     }
 
     const { model: pageModel, effects } = initPage(
@@ -480,17 +490,10 @@ export function createRouter<Shared>(config: {
       _cache: cache,
     };
 
-    const allEffects: Effect<RouterMsg<Shared>>[] = mapPageEffects(effects);
-
-    // If guard redirected, also push browser URL
-    if (resolved.finalUrl.pathname !== url.pathname || resolved.finalUrl.search !== url.search) {
-      allEffects.push(
-        navFxEffect(
-          resolved.finalUrl.pathname + resolved.finalUrl.search,
-          true,
-        ) as Effect<any>,
-      );
-    }
+    const allEffects: Effect<RouterMsg<Shared>>[] = [
+      ...mapPageEffects(effects),
+      ...redirectEffects,
+    ];
 
     return allEffects.length > 0 ? [next, allEffects] : next;
   }
@@ -505,7 +508,7 @@ export function createRouter<Shared>(config: {
     if (model._page) {
       const cfg = getConfig(model._page.routeIdx);
       if (cfg?.save) {
-        const saved = cfg.save(model._page.model);
+        const saved = cfg.save(model._page.model as any);
         if (saved !== undefined) cache.set(model._page.key, saved);
       }
     }
@@ -591,7 +594,7 @@ export function createRouter<Shared>(config: {
           if (!cfg) return model;
 
           const result = cfg.update(
-            model._page.model,
+            model._page.model as any,
             msg.msg,
             model.shared,
           );
@@ -629,14 +632,14 @@ export function createRouter<Shared>(config: {
         (msg: any): RouterMsg<Shared> => ({ tag: "@@router/PageMsg", msg }),
       );
 
-      return cfg.view(model._page.model, model.shared, pageDispatch);
+      return cfg.view(model._page.model as any, model.shared, pageDispatch);
     },
 
     subscriptions(model) {
       if (!model._page) return [];
       const cfg = getConfig(model._page.routeIdx);
       if (!cfg?.subscriptions) return [];
-      return mapPageSubs(cfg.subscriptions(model._page.model, model.shared));
+      return mapPageSubs(cfg.subscriptions(model._page.model as any, model.shared));
     },
 
     listen() {
