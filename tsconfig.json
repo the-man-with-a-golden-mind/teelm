@@ -6,6 +6,7 @@
     "module": "Preserve",
     "moduleDetection": "force",
     "jsx": "react-jsx",
+    "jsxImportSource": "teelm",
     "allowJs": true,
     "types": ["bun", "node"],
 
@@ -21,10 +22,33 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
-  }
+    "noPropertyAccessFromIndexSignature": false,
+
+    // Force "teelm" to resolve to local sources. Without this TS may pick
+    // up a stale `node_modules/teelm` higher in the filesystem.
+    "paths": {
+      "teelm": ["./src/teelm.ts"],
+      "teelm/fx": ["./src/fx.ts"],
+      "teelm/subs": ["./src/subs.ts"],
+      "teelm/debugger": ["./src/debugger.ts"],
+      "teelm/router": ["./src/router.ts"],
+      "teelm/jsx-runtime": ["./src/jsx-runtime.ts"],
+      "teelm/testing": ["./src/testing.ts"],
+      "teelm/functional": ["./src/functional.ts"],
+      "teelm/task": ["./src/task.ts"],
+      "teelm/events": ["./src/events.ts"]
+    }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "examples/**/vite.config.ts",
+    "examples/**/dist",
+    "examples/**/node_modules"
+  ]
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@superapp/example-counter",
+  "name": "@teelm/example-counter",
   "private": true,
   "type": "module",
   "scripts": {

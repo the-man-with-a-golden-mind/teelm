@@ -1,12 +1,20 @@
-// SuperApp — Advanced SPA Router
+// Teelm — Advanced SPA Router
 // Typed URL parsing, Page protocol, lifecycle management, guards
 
 import {
-  app, h, mapEffect, mapSub, mapDispatch,
+  app, h, mapEffect, mapSub, mapDispatch, none, batch,
   type AppInstance, type RenderHook, type UnmountHook,
-  type Dispatch, type Sub, type Effect, type Cmd, type VNode,
-} from "./hyperapp";
+  type Dispatch, type Sub, type Subs, type Effect, type Cmd, type VNode,
+  type SubFn,
+} from "./teelm";
 import { navigate as navFxEffect } from "./fx";
+
+// Internal helper: brand a raw [fn, props] tuple as a Sub<Msg, P>.
+const brandSub = <Msg, P>(fn: SubFn<Msg, P>, props: P): Sub<Msg, P> =>
+  [fn, props] as unknown as Sub<Msg, P>;
+// Internal helper: brand a raw effect array as a Cmd<Msg>.
+const brandCmd = <Msg>(effects: readonly Effect<Msg>[]): Cmd<Msg> =>
+  effects as unknown as Cmd<Msg>;
 
 // ══════════════════════════════════════════════════════════════
 // URL Parser
@@ -237,12 +245,12 @@ export interface PageConfig<
   Shared,
   Params extends Record<string, any>,
 > {
-  init(params: Params, shared: Shared): Model | readonly [Model, Cmd<Msg>];
+  init(params: Params, shared: Shared): readonly [Model, Cmd<Msg>];
   update(
     model: Readonly<Model>,
     msg: Msg,
     shared: Readonly<Shared>,
-  ): Model | readonly [Model, Cmd<Msg>];
+  ): readonly [Model, Cmd<Msg>];
   view(
     model: Readonly<Model>,
     shared: Readonly<Shared>,
@@ -251,13 +259,13 @@ export interface PageConfig<
   subscriptions?(
     model: Readonly<Model>,
     shared: Readonly<Shared>,
-  ): Sub<Msg>[];
+  ): Subs<Msg>;
   save?(model: Readonly<Model>): unknown;
   load?(
     saved: unknown,
     params: Params,
     shared: Shared,
-  ): Model | readonly [Model, Cmd<Msg>];
+  ): readonly [Model, Cmd<Msg>];
   onMount?(ctx: PageMountContext<Model, Msg, Shared, Params>): void;
   onUnmount?(ctx: PageMountContext<Model, Msg, Shared, Params>): void;
   afterUpdate?(ctx: PageAfterUpdateContext<Model, Msg, Shared, Params>): void;
@@ -327,12 +335,13 @@ export function page<Model, Msg, Shared, Params extends Record<string, any>>(
     guard?: (params: Params, shared: Readonly<Shared>) => true | string;
   },
 ): PageRoute<Shared> {
-  return {
+  const out: PageRoute<Shared> = {
     _tag: "page-route",
     _routeDef: routeDef,
     _config: config,
-    _guard: options?.guard,
   };
+  if (options?.guard) (out as { _guard?: typeof options.guard })._guard = options.guard;
+  return out;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -360,22 +369,18 @@ export type RouterMsg<Shared> =
     };
 
 export interface Router<Shared> {
-  init(
-    url?: URL,
-  ): RouterModel<Shared> | readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
+  init(url?: URL): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
   update(
     model: RouterModel<Shared>,
     msg: RouterMsg<Shared>,
-  ):
-    | RouterModel<Shared>
-    | readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
+  ): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
   view(
     model: Readonly<RouterModel<Shared>>,
     dispatch: Dispatch<RouterMsg<Shared>>,
   ): VNode;
   subscriptions(
     model: Readonly<RouterModel<Shared>>,
-  ): Sub<RouterMsg<Shared>>[];
+  ): Subs<RouterMsg<Shared>>;
   listen(): Sub<RouterMsg<Shared>>;
   navigate(url: string, replace?: boolean): Effect<RouterMsg<Shared>>;
   updateShared(fn: (s: Shared) => Shared): RouterMsg<Shared>;
@@ -448,15 +453,11 @@ export function createRouter<Shared>(config: {
   ): { model: unknown; effects: Cmd<any> } {
     const saved = cache.get(cacheKey);
     if (saved !== undefined && cfg.load) {
-      const result = cfg.load(saved, params, shared);
-      if (Array.isArray(result))
-        return { model: result[0], effects: result[1] as Cmd<any> };
-      return { model: result, effects: [] };
+      const [model, effects] = cfg.load(saved, params, shared);
+      return { model, effects };
     }
-    const result = cfg.init(params, shared);
-    if (Array.isArray(result))
-      return { model: result[0], effects: result[1] as Cmd<any> };
-    return { model: result, effects: [] };
+    const [model, effects] = cfg.init(params, shared);
+    return { model, effects };
   }
 
   function mapPageEffects(
@@ -471,14 +472,18 @@ export function createRouter<Shared>(config: {
   }
 
   function mapPageSubs(
-    subs: Sub<any>[],
-  ): Sub<RouterMsg<Shared>>[] {
-    return subs.map((s) =>
-      mapSub(s, (msg: any): RouterMsg<Shared> => ({
-        tag: "@@router/PageMsg",
-        msg,
-      })),
-    );
+    subs: Subs<any>,
+  ): Subs<RouterMsg<Shared>> {
+    const out: (Sub<RouterMsg<Shared>> | false | null | undefined)[] = [];
+    for (const s of subs) {
+      out.push(
+        mapSub(s as Sub<any> | false | null | undefined, (msg: any): RouterMsg<Shared> => ({
+          tag: "@@router/PageMsg",
+          msg,
+        })),
+      );
+    }
+    return out;
   }
 
   function getConfig(
@@ -491,7 +496,7 @@ export function createRouter<Shared>(config: {
     model: RouterModel<Shared>,
     url: URL,
     resolved: Exclude<Resolved, { notFound: true }>,
-  ): RouterModel<Shared> | readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>] {
+  ): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>] {
     const redirected =
       resolved.finalUrl.pathname !== url.pathname ||
       resolved.finalUrl.search !== url.search;
@@ -501,17 +506,17 @@ export function createRouter<Shared>(config: {
           navFxEffect(
             resolved.finalUrl.pathname + resolved.finalUrl.search,
             true,
-          ) as Effect<any>,
+          ) as Effect<RouterMsg<Shared>>,
         ]
       : [];
 
-    // Same page check — return exact same reference to avoid re-render
+    // Same page check — return same model reference to avoid re-render
     if (
       model._page &&
       model._page.key === cacheKey &&
       model._page.routeIdx === resolved.routeIdx
     ) {
-      return redirectEffects.length > 0 ? [model, redirectEffects] : model;
+      return [model, brandCmd(redirectEffects)];
     }
 
     const cache = new Map(model._cache);
@@ -549,14 +554,14 @@ export function createRouter<Shared>(config: {
       ...redirectEffects,
     ];
 
-    return allEffects.length > 0 ? [next, allEffects] : next;
+    return [next, brandCmd(allEffects)];
   }
 
   function transitionToNotFound(
     model: RouterModel<Shared>,
     url: URL,
     path: string,
-  ): RouterModel<Shared> | readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>] {
+  ): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>] {
     const cache = new Map(model._cache);
 
     if (model._page) {
@@ -568,7 +573,7 @@ export function createRouter<Shared>(config: {
     }
 
     if (!notFoundConfig) {
-      return { ...model, url, _page: null, _cache: cache };
+      return [{ ...model, url, _page: null, _cache: cache }, none];
     }
 
     const { model: pageModel, effects } = initPage(
@@ -591,13 +596,13 @@ export function createRouter<Shared>(config: {
       _cache: cache,
     };
 
-    return effects.length > 0 ? [next, mapPageEffects(effects)] : next;
+    return [next, brandCmd(mapPageEffects(effects))];
   }
 
   // ── Stable listen subscription (memoized to avoid re-subscribe loop) ──
 
   const LISTEN_PROPS = {};
-  const listenRunner = (dispatch: Dispatch<RouterMsg<Shared>>) => {
+  const listenRunner: SubFn<RouterMsg<Shared>, typeof LISTEN_PROPS> = (dispatch) => {
     const handler = () => {
       dispatch({ tag: "@@router/UrlChanged", url: new URL(location.href) });
     };
@@ -605,7 +610,7 @@ export function createRouter<Shared>(config: {
     addEventListener("popstate", handler);
     return () => removeEventListener("popstate", handler);
   };
-  const listenSub: Sub<RouterMsg<Shared>> = [listenRunner, LISTEN_PROPS];
+  const listenSub: Sub<RouterMsg<Shared>> = brandSub(listenRunner, LISTEN_PROPS);
 
   // ── Router object ───────────────────────────────────────────
 
@@ -643,35 +648,27 @@ export function createRouter<Shared>(config: {
         }
 
         case "@@router/PageMsg": {
-          if (!model._page) return model;
+          if (!model._page) return [model, none];
           const cfg = getConfig(model._page.routeIdx);
-          if (!cfg) return model;
+          if (!cfg) return [model, none];
 
-          const result = cfg.update(
+          const [newPageModel, cmd] = cfg.update(
             model._page.model as any,
             msg.msg,
             model.shared,
           );
 
-          if (Array.isArray(result)) {
-            const [newPageModel, cmd] = result;
-            return [
-              {
-                ...model,
-                _page: { ...model._page, model: newPageModel },
-              },
-              mapPageEffects(cmd as Cmd<any>),
-            ];
-          }
-
-          return {
-            ...model,
-            _page: { ...model._page, model: result },
-          };
+          return [
+            {
+              ...model,
+              _page: { ...model._page, model: newPageModel },
+            },
+            brandCmd(mapPageEffects(cmd as Cmd<any>)),
+          ];
         }
 
         case "@@router/UpdateShared": {
-          return { ...model, shared: msg.fn(model.shared) };
+          return [{ ...model, shared: msg.fn(model.shared) }, none];
         }
       }
     },
@@ -721,7 +718,7 @@ export function createRouter<Shared>(config: {
     },
 
     navigate(url: string, replace = false) {
-      return navFxEffect(url, replace) as Effect<any>;
+      return navFxEffect(url, replace) as Effect<RouterMsg<Shared>>;
     },
 
     updateShared(fn) {
@@ -767,7 +764,7 @@ function defaultPageErrorView(error: unknown): VNode {
     "section",
     {
       role: "alert",
-      "data-superapp-error-boundary": "page",
+      "data-teelm-error-boundary": "page",
       style: {
         padding: "1rem",
         borderRadius: "0.75rem",
@@ -873,8 +870,8 @@ export function routerApp<Shared>(config: {
     }
   };
 
-  const wrap = (r: RouterModel<Shared> | readonly [RouterModel<Shared>, Cmd<M>]): S | readonly [S, Cmd<M>] =>
-    Array.isArray(r) ? [{ router: r[0] as RouterModel<Shared> }, r[1] as Cmd<M>] : { router: r as RouterModel<Shared> };
+  const wrap = (r: readonly [RouterModel<Shared>, Cmd<M>]): readonly [S, Cmd<M>] =>
+    [{ router: r[0] }, r[1]];
 
   return app<S, M>({
     init: wrap(router.init(config.url)),
@@ -910,7 +907,7 @@ export function routerApp<Shared>(config: {
           router.listen(),
         ],
     node: config.node,
-    debug: config.debug,
+    ...(config.debug !== undefined ? { debug: config.debug } : {}),
   });
 }
 
@@ -960,32 +957,30 @@ export function matchRoute(
 export function onRoute<Msg>(
   routes: Route<Msg>[],
   notFound?: (path: string) => Msg,
-): Sub<Msg> {
-  return [
-    (
-      dispatch: Dispatch<Msg>,
-      props: { routes: Route<Msg>[]; notFound?: (path: string) => Msg },
-    ) => {
-      const resolve = () => {
-        const path = location.pathname;
-        for (const r of props.routes) {
-          const p = matchRoute(r.path, path);
-          if (p) {
-            dispatch(r.handler(p));
-            return;
-          }
+): Sub<Msg, { routes: Route<Msg>[]; notFound?: (path: string) => Msg }> {
+  const fn: SubFn<Msg, { routes: Route<Msg>[]; notFound?: (path: string) => Msg }> = (
+    dispatch,
+    props,
+  ) => {
+    const resolve = () => {
+      const path = location.pathname;
+      for (const r of props.routes) {
+        const p = matchRoute(r.path, path);
+        if (p) {
+          dispatch(r.handler(p));
+          return;
         }
-        if (props.notFound) dispatch(props.notFound(path));
-      };
-      resolve();
-      addEventListener("popstate", resolve);
-      return () => removeEventListener("popstate", resolve);
-    },
-    { routes, notFound },
-  ];
+      }
+      if (props.notFound) dispatch(props.notFound(path));
+    };
+    resolve();
+    addEventListener("popstate", resolve);
+    return () => removeEventListener("popstate", resolve);
+  };
+  return brandSub(fn, { routes, ...(notFound ? { notFound } : {}) });
 }
 
-/** @deprecated Use navigate from superapp/fx or router.navigate() */
+/** @deprecated Use navigate from teelm/fx or router.navigate() */
 export function navigate<Msg>(
   url: string,
   replace = false,

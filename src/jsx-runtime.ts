@@ -1,4 +1,4 @@
-// SuperApp — JSX Runtime (React 17+ automatic transform)
+// Teelm — JSX Runtime (React 17+ automatic transform)
 //
 // tsconfig.json:
 //   "jsx": "react-jsx",
@@ -7,7 +7,7 @@
 // Or use per-file pragma:
 //   /** @jsxImportSource ./src */
 
-import { h, text, type VNode } from "./hyperapp";
+import { h, text, type VNode } from "./teelm";
 
 export { type VNode as JSX };
 

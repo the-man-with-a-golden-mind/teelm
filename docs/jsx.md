@@ -1,6 +1,6 @@
 # JSX Support
 
-SuperApp supports JSX via the React 17+ automatic transform. You can use JSX syntax alongside or instead of `h()` calls.
+Teelm supports JSX via the React 17+ automatic transform. You can use JSX syntax alongside or instead of `h()` calls.
 
 ## Configuration
 
@@ -10,22 +10,22 @@ SuperApp supports JSX via the React 17+ automatic transform. You can use JSX syn
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "superapp"
+    "jsxImportSource": "teelm"
   }
 }
 ```
 
-This tells TypeScript to use SuperApp's JSX runtime automatically. No manual imports needed.
+This tells TypeScript to use Teelm's JSX runtime automatically. No manual imports needed.
 
 ### Per-File Pragma
 
 Alternatively, use a pragma comment at the top of individual files:
 
 ```tsx
-/** @jsxImportSource superapp */
+/** @jsxImportSource teelm */
 ```
 
-This is useful when mixing SuperApp JSX with other frameworks or when you only want JSX in specific files.
+This is useful when mixing Teelm JSX with other frameworks or when you only want JSX in specific files.
 
 ## Using JSX
 
@@ -61,6 +61,8 @@ function view(state: State, dispatch: Dispatch<Msg>) {
 
 ### Event Handlers
 
+Inline closures work as you'd expect:
+
 ```tsx
 <input
   type="text"
@@ -75,10 +77,32 @@ function view(state: State, dispatch: Dispatch<Msg>) {
 </form>
 ```
 
+For boilerplate-free wiring, the typed event helpers in `teelm/events` produce prop fragments you can spread:
+
+```tsx
+import { makeEvents } from "teelm/events";
+
+function view(state: State, dispatch: Dispatch<Msg>) {
+  const E = makeEvents(dispatch);
+  return (
+    <form {...E.onSubmit({ tag: "Submit" })}>
+      <input
+        type="text"
+        value={state.input}
+        {...E.onInput((value) => ({ tag: "SetInput", value }))}
+      />
+      <button type="submit">Save</button>
+    </form>
+  );
+}
+```
+
+This keeps `dispatch` captured once per render and avoids stale-closure bugs when handlers move between elements.
+
 ### Spread Props
 
 ```tsx
-import { routerLink } from "superapp/router";
+import { routerLink } from "teelm/router";
 
 <a {...routerLink("/about")} class="nav-link">About</a>
 ```
@@ -128,7 +152,7 @@ h("div", { class: "card" },
 
 | Feature | `h()` | JSX |
 |---------|-------|-----|
-| Import needed | `import { h } from "superapp"` | None (automatic) |
+| Import needed | `import { h } from "teelm"` | None (automatic) |
 | Children | Variadic arguments | Nested elements |
 | Text nodes | Explicit `String()` conversion | Automatic |
 | Conditional children | Inline `condition ? h(...) : null` | `{condition && <.../>}` |
@@ -139,23 +163,24 @@ h("div", { class: "card" },
 When using the CLI with `--jsx`, pages are generated as `.tsx` files:
 
 ```bash
-superapp new my-app --jsx
-superapp add "Dashboard" --jsx
+teelm new my-app --jsx
+teelm add "Dashboard" --jsx
 ```
 
 A JSX page looks like:
 
 ```tsx
-import { type PageConfig } from "superapp/router";
+import { noFx } from "teelm";
+import { type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => ({}),
-  update: (model) => model,
+  init: () => noFx({}),
+  update: (model) => noFx(model),
   view: (_model, shared) => (
     <div class="text-center py-16">
       <h1 class="text-4xl font-bold">Welcome to {shared.appName}</h1>
-      <p class="text-gray-500">Built with SuperApp</p>
+      <p class="text-gray-500">Built with Teelm</p>
     </div>
   ),
 };
@@ -163,7 +188,7 @@ export const page: PageConfig<{}, never, Shared, {}> = {
 
 ## Class Handling
 
-SuperApp supports multiple formats for the `class` prop (both in JSX and `h()`):
+Teelm supports multiple formats for the `class` prop (both in JSX and `h()`):
 
 ```tsx
 // String
@@ -204,11 +229,11 @@ The ref callback is called when the element is created.
 
 ## TypeScript Types
 
-SuperApp's JSX namespace provides type definitions:
+Teelm's JSX namespace provides type definitions:
 
 ```ts
 // VNode is the element type
-import type { VNode } from "superapp";
+import type { VNode } from "teelm";
 
 // JSX namespace for intrinsic elements
 namespace JSX {

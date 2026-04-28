@@ -1,20 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import { createDispatchSpy, getEffects, getModel, hasEffects, runEffect } from "../src/testing";
-import type { Effect } from "../src/hyperapp";
+import { noFx, withFx as withFxHelper, type Cmd, type Effect } from "../src/teelm";
 
 describe("testing helpers", () => {
-  it("unwraps plain and effectful update results", () => {
+  it("unwraps tuple update results", () => {
     const effect: Effect<string, { ok: boolean }> = [() => {}, { ok: true }];
-    const plain = { n: 1 };
-    const withFx = [{ n: 2 }, [effect]] as const;
+    const plain = noFx({ n: 1 });
+    const fxResult = withFxHelper<{ n: number }, string>({ n: 2 }, effect);
 
     expect(getModel(plain)).toEqual({ n: 1 });
-    expect(getEffects(plain)).toEqual([]);
+    expect(getEffects(plain) as readonly Effect<never>[]).toEqual([]);
     expect(hasEffects(plain)).toBe(false);
 
-    expect(getModel(withFx)).toEqual({ n: 2 });
-    expect(getEffects(withFx)).toEqual([effect]);
-    expect(hasEffects(withFx)).toBe(true);
+    expect(getModel(fxResult)).toEqual({ n: 2 });
+    expect(getEffects(fxResult) as readonly Effect<string>[]).toEqual([effect]);
+    expect(hasEffects(fxResult)).toBe(true);
   });
 
   it("records dispatched messages including batches", () => {

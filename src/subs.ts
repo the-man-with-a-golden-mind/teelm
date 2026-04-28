@@ -1,7 +1,11 @@
-// SuperApp — Subscription creators
-// Subscriptions are [runner, props] tuples; runner returns a cleanup function
+// Teelm — Subscription creators
+// Subscriptions are [runner, props] tuples; runner returns a cleanup function.
+// Sub<Msg> is a branded type — these helpers are the only way to construct one.
 
-import type { Dispatch, Sub } from "./hyperapp";
+import type { Dispatch, Sub, SubFn } from "./teelm";
+
+const sub = <Msg, P>(fn: SubFn<Msg, P>, props: P): Sub<Msg, P> =>
+  [fn, props] as unknown as Sub<Msg, P>;
 
 // ── Interval ───────────────────────────────────────────────────
 
@@ -22,8 +26,8 @@ function intervalSub<Msg>(
 export function interval<Msg>(
   ms: number,
   msg: Msg | ((now: number) => Msg),
-): Sub<Msg> {
-  return [intervalSub, { ms, msg }];
+): Sub<Msg, { ms: number; msg: Msg | ((now: number) => Msg) }> {
+  return sub(intervalSub, { ms, msg });
 }
 
 // ── Keyboard ───────────────────────────────────────────────────
@@ -39,8 +43,8 @@ function keyDownSub<Msg>(
 
 export function onKeyDown<Msg>(
   msg: (key: string, e: KeyboardEvent) => Msg,
-): Sub<Msg> {
-  return [keyDownSub, { msg }];
+): Sub<Msg, { msg: (key: string, e: KeyboardEvent) => Msg }> {
+  return sub(keyDownSub, { msg });
 }
 
 function keyUpSub<Msg>(
@@ -54,8 +58,8 @@ function keyUpSub<Msg>(
 
 export function onKeyUp<Msg>(
   msg: (key: string, e: KeyboardEvent) => Msg,
-): Sub<Msg> {
-  return [keyUpSub, { msg }];
+): Sub<Msg, { msg: (key: string, e: KeyboardEvent) => Msg }> {
+  return sub(keyUpSub, { msg });
 }
 
 // ── Mouse ──────────────────────────────────────────────────────
@@ -71,8 +75,8 @@ function mouseMoveSub<Msg>(
 
 export function onMouseMove<Msg>(
   msg: (x: number, y: number) => Msg,
-): Sub<Msg> {
-  return [mouseMoveSub, { msg }];
+): Sub<Msg, { msg: (x: number, y: number) => Msg }> {
+  return sub(mouseMoveSub, { msg });
 }
 
 // ── Window Resize ──────────────────────────────────────────────
@@ -88,8 +92,8 @@ function resizeSub<Msg>(
 
 export function onResize<Msg>(
   msg: (w: number, h: number) => Msg,
-): Sub<Msg> {
-  return [resizeSub, { msg }];
+): Sub<Msg, { msg: (w: number, h: number) => Msg }> {
+  return sub(resizeSub, { msg });
 }
 
 // ── URL Change ─────────────────────────────────────────────────
@@ -103,8 +107,10 @@ function urlChangeSub<Msg>(
   return () => removeEventListener("popstate", handler);
 }
 
-export function onUrlChange<Msg>(msg: (url: URL) => Msg): Sub<Msg> {
-  return [urlChangeSub, { msg }];
+export function onUrlChange<Msg>(
+  msg: (url: URL) => Msg,
+): Sub<Msg, { msg: (url: URL) => Msg }> {
+  return sub(urlChangeSub, { msg });
 }
 
 // ── Animation Frame ────────────────────────────────────────────
@@ -124,8 +130,8 @@ function animSub<Msg>(
 
 export function onAnimationFrame<Msg>(
   msg: (timestamp: number) => Msg,
-): Sub<Msg> {
-  return [animSub, { msg }];
+): Sub<Msg, { msg: (t: number) => Msg }> {
+  return sub(animSub, { msg });
 }
 
 // ── Generic DOM Event ──────────────────────────────────────────
@@ -143,8 +149,8 @@ export function onEvent<Msg>(
   event: string,
   msg: (e: Event) => Msg,
   target: EventTarget = window,
-): Sub<Msg> {
-  return [eventSub, { target, event, msg }];
+): Sub<Msg, { target: EventTarget; event: string; msg: (e: Event) => Msg }> {
+  return sub(eventSub, { target, event, msg });
 }
 
 // ── WebSocket ──────────────────────────────────────────────────
@@ -152,7 +158,7 @@ export function onEvent<Msg>(
 interface WsProps<Msg> {
   url: string;
   protocols?: string | string[];
-  onMessage: (data: any) => Msg;
+  onMessage: (data: unknown) => Msg;
   onOpen?: () => Msg;
   onClose?: () => Msg;
   onError?: (e: Event) => Msg;
@@ -170,6 +176,6 @@ function wsSub<Msg>(
   return () => ws.close();
 }
 
-export function websocket<Msg>(props: WsProps<Msg>): Sub<Msg> {
-  return [wsSub, props];
+export function websocket<Msg>(props: WsProps<Msg>): Sub<Msg, WsProps<Msg>> {
+  return sub(wsSub, props);
 }

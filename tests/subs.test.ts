@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { interval, onKeyDown, onKeyUp, onResize, onUrlChange, onEvent } from "../src/subs";
-import type { Dispatch, Sub } from "../src/hyperapp";
+import type { Dispatch, Sub } from "../src/teelm";
 
 describe("interval()", () => {
   it("fires callback at interval", async () => {
     const msgs: number[] = [];
-    const dispatch: Dispatch<number> = (n) => msgs.push(n);
+    const dispatch: Dispatch<number> = (n) => { msgs.push(n as number); };
     const sub = interval<number>(50, 42);
-    const [runner, props] = sub as [any, any];
+    const [runner, props] = sub as unknown as [any, any];
     const cleanup = runner(dispatch, props);
 
     await new Promise((r) => setTimeout(r, 130));
@@ -19,9 +19,9 @@ describe("interval()", () => {
 
   it("supports factory function", async () => {
     const msgs: number[] = [];
-    const dispatch: Dispatch<number> = (n) => msgs.push(n);
+    const dispatch: Dispatch<number> = (n) => { msgs.push(n as number); };
     const sub = interval<number>(50, (now) => now);
-    const [runner, props] = sub as [any, any];
+    const [runner, props] = sub as unknown as [any, any];
     const cleanup = runner(dispatch, props);
 
     await new Promise((r) => setTimeout(r, 80));
@@ -33,9 +33,9 @@ describe("interval()", () => {
 
   it("stops on cleanup", async () => {
     const msgs: number[] = [];
-    const dispatch: Dispatch<number> = (n) => msgs.push(n);
+    const dispatch: Dispatch<number> = (n) => { msgs.push(n as number); };
     const sub = interval<number>(30, 1);
-    const [runner, props] = sub as [any, any];
+    const [runner, props] = sub as unknown as [any, any];
     const cleanup = runner(dispatch, props);
     cleanup();
 
@@ -53,7 +53,7 @@ describe("onKeyDown()", () => {
 
   it("dispatches on keydown event", () => {
     let received: string | undefined;
-    const [runner, props] = onKeyDown<string>((key) => key) as [any, any];
+    const [runner, props] = onKeyDown<string>((key) => key) as unknown as [any, any];
     const cleanup = runner((msg: string) => { received = msg; }, props);
 
     dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
@@ -66,7 +66,7 @@ describe("onKeyDown()", () => {
 describe("onKeyUp()", () => {
   it("dispatches on keyup event", () => {
     let received: string | undefined;
-    const [runner, props] = onKeyUp<string>((key) => key) as [any, any];
+    const [runner, props] = onKeyUp<string>((key) => key) as unknown as [any, any];
     const cleanup = runner((msg: string) => { received = msg; }, props);
 
     dispatchEvent(new KeyboardEvent("keyup", { key: "Escape" }));
@@ -80,7 +80,7 @@ describe("onEvent()", () => {
   it("listens to custom event on target", () => {
     let received = false;
     const target = new EventTarget();
-    const [runner, props] = onEvent<boolean>("custom", () => true, target) as [any, any];
+    const [runner, props] = onEvent<boolean>("custom", () => true, target) as unknown as [any, any];
     const cleanup = runner((msg: boolean) => { received = msg; }, props);
 
     target.dispatchEvent(new Event("custom"));
@@ -92,7 +92,7 @@ describe("onEvent()", () => {
   it("cleans up listener", () => {
     let count = 0;
     const target = new EventTarget();
-    const [runner, props] = onEvent<void>("ev", () => undefined, target) as [any, any];
+    const [runner, props] = onEvent<void>("ev", () => undefined, target) as unknown as [any, any];
     const cleanup = runner(() => { count++; }, props);
 
     target.dispatchEvent(new Event("ev"));

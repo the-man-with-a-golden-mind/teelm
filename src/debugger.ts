@@ -1,7 +1,7 @@
-// SuperApp — Visual State Debugger
+// Teelm — Visual State Debugger
 // Attaches a floating overlay with state inspection & time-travel controls
 
-import type { AppInstance } from "./hyperapp";
+import type { AppInstance } from "./teelm";
 
 export interface DebuggerConfig {
   position?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
@@ -33,7 +33,7 @@ export function attachDebugger<S, Msg>(
   };
 
   const root = document.createElement("div");
-  root.id = "superapp-dbg";
+  root.id = "teelm-dbg";
   root.style.cssText = `
     position:fixed;${pos[position]};z-index:99999;
     font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -52,7 +52,7 @@ export function attachDebugger<S, Msg>(
 
   const title = document.createElement("span");
   title.style.cssText = "font-weight:700;color:#a78bfa";
-  title.textContent = "SuperApp";
+  title.textContent = "Teelm";
 
   const toggle = document.createElement("span");
   toggle.style.cssText = "color:#94a3b8;font-size:11px";

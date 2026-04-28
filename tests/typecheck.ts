@@ -1,4 +1,4 @@
-import { withFx, type Effect } from "../src/hyperapp";
+import { withFx, type Effect } from "../src/teelm";
 import { delay } from "../src/fx";
 
 type Msg = { tag: "Done" };

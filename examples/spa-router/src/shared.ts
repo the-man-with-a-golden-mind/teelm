@@ -3,5 +3,5 @@ export interface Shared {
 }
 
 export const initialShared: Shared = {
-  appName: "SuperApp",
+  appName: "Teelm",
 };

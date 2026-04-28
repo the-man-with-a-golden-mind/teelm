@@ -1,13 +1,13 @@
 # Router
 
-SuperApp includes a built-in SPA router with typed URL parsing, a Page protocol for lifecycle management, guards, redirects, page caching, error boundaries, and code generation from file conventions.
+Teelm includes a built-in SPA router with typed URL parsing, a Page protocol for lifecycle management, guards, redirects, page caching, error boundaries, and code generation from file conventions.
 
 ## Overview
 
 The router system has four layers:
 
 1. **Route definitions** -- Typed URL patterns with parsers
-2. **Page protocol** -- Lifecycle interface (`init`, `update`, `view`, `subscriptions`, `save`, `load`, `onMount`, `onUnmount`, `afterUpdate`)
+2. **Page protocol** -- Lifecycle interface (`init`, `update`, `view`, `subscriptions`, `save`, `load`, `onMount`, `onUnmount`, `afterUpdate`, `onError`, `errorView`)
 3. **Router instance** -- Matches URLs to pages, manages transitions
 4. **routerApp()** -- Zero-boilerplate app setup with layout
 
@@ -20,7 +20,7 @@ The router system has four layers:
 Define routes with typed path and query parameters.
 
 ```ts
-import { route, str, int, float, oneOf, q } from "superapp/router";
+import { route, str, int, float, oneOf, q } from "teelm/router";
 
 // Static route
 const homeRoute = route("/");
@@ -98,15 +98,15 @@ Each page implements the `PageConfig` interface. This is the contract between yo
 
 ```ts
 interface PageConfig<Model, Msg, Shared, Params> {
-  // Required
-  init(params: Params, shared: Shared): Model | [Model, Cmd<Msg>];
-  update(model: Model, msg: Msg, shared: Shared): Model | [Model, Cmd<Msg>];
-  view(model: Model, shared: Shared, dispatch: Dispatch<Msg>): VNode;
+  // Required — all return tuples
+  init(params: Params, shared: Shared): readonly [Model, Cmd<Msg>];
+  update(model: Readonly<Model>, msg: Msg, shared: Readonly<Shared>): readonly [Model, Cmd<Msg>];
+  view(model: Readonly<Model>, shared: Readonly<Shared>, dispatch: Dispatch<Msg>): VNode;
 
   // Optional
-  subscriptions?(model: Model, shared: Shared): Sub<Msg>[];
-  save?(model: Model): unknown;
-  load?(saved: unknown, params: Params, shared: Shared): Model | [Model, Cmd<Msg>];
+  subscriptions?(model: Readonly<Model>, shared: Readonly<Shared>): Subs<Msg>;
+  save?(model: Readonly<Model>): unknown;
+  load?(saved: unknown, params: Params, shared: Shared): readonly [Model, Cmd<Msg>];
   onMount?(ctx: PageMountContext<Model, Msg, Shared, Params>): void;
   onUnmount?(ctx: PageMountContext<Model, Msg, Shared, Params>): void;
   afterUpdate?(ctx: PageAfterUpdateContext<Model, Msg, Shared, Params>): void;
@@ -114,6 +114,8 @@ interface PageConfig<Model, Msg, Shared, Params> {
   errorView?(ctx: PageErrorContext<Model, Msg, Shared, Params>): VNode;
 }
 ```
+
+`init`, `update`, and `load` always return `readonly [Model, Cmd<Msg>]`. Use `noFx(model)` when there are no effects, or `withFx(model, ...effects)` when there are.
 
 ### Type Parameters
 
@@ -128,39 +130,45 @@ interface PageConfig<Model, Msg, Shared, Params> {
 
 1. **Navigation to page**: `init(params, shared)` is called (or `load(saved, params, shared)` if cache exists)
 2. **User interaction**: `update(model, msg, shared)` handles messages
-3. **Rendering**: `view(model, shared, dispatch)` produces VNode
+3. **Rendering**: `view(model, shared, dispatch)` produces the page's VNode
 4. **Active subscriptions**: `subscriptions(model, shared)` declares event sources
 5. **Navigation away**: `save(model)` caches page state (if defined)
 6. **Return to page**: `load(saved, params, shared)` restores from cache
-7. **DOM mounted**: `onMount(...)` runs after the page has been rendered into the DOM
-8. **DOM updated**: `afterUpdate(...)` runs after subsequent renders, including shared-state changes
-9. **DOM removed**: `onUnmount(...)` runs before the page is torn down
+7. **DOM mounted**: `onMount(ctx)` runs after the page has been rendered into the DOM
+8. **DOM updated**: `afterUpdate(ctx)` runs after subsequent renders, including shared-state changes
+9. **DOM removed**: `onUnmount(ctx)` runs before the page is torn down
 
-If `view()` throws, the router calls `onError(...)` and renders `errorView(...)` (or a built-in fallback if `errorView` is omitted) instead of crashing the entire app.
+If `view()` throws, the router calls `onError(ctx)` and renders `errorView(ctx)` (or a built-in fallback if `errorView` is omitted) instead of crashing the entire app. Lifecycle hooks (`onMount`, `onUnmount`, `afterUpdate`) that throw also route through `onError` with the corresponding `phase`.
 
 ### Page Caching with save/load
 
-When a user navigates away from a page, `save()` is called to extract cacheable data. When they return, `load()` restores it.
+When a user navigates away from a page, `save()` is called to extract cacheable data. When they return, `load()` restores it as a `[Model, Cmd<Msg>]` tuple — so you can re-trigger any "freshen on reopen" effects from `load`.
 
 ```ts
+import { noFx, withFx } from "teelm";
+import { type PageConfig } from "teelm/router";
+
 const userPage: PageConfig<UserModel, UserMsg, Shared, { id: string }> = {
-  init: (params, shared) => ({ id: params.id, data: null, loading: true }),
+  init: (params) => noFx({ id: params.id, data: null, loading: true }),
   // ...
 
-  save: (model) => model,
-  load: (saved) => saved as UserModel,
+  save: (model) => model,                    // capture full model
+  load: (saved) => noFx(saved as UserModel), // restore as-is, no effects
 };
 ```
 
-The cache key is `pathname + search`. If `save` is not defined, the page always re-initializes from `init`.
+The cache key is `pathname + search`. If `save` is not defined, the page always re-initializes via `init`.
 
 ### Example Page
 
 ```ts
-import { h, withFx, type Dispatch } from "superapp";
-import { http } from "superapp/fx";
-import { type PageConfig } from "superapp/router";
+import { h, noFx, withFx, type Dispatch } from "teelm";
+import { http } from "teelm/fx";
+import { Decode, HttpError } from "teelm/functional";
+import { type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
+
+interface User { id: number; name: string }
 
 interface Model {
   id: number;
@@ -171,35 +179,42 @@ interface Model {
 
 type Msg =
   | { tag: "GotUser"; user: User }
-  | { tag: "FetchError"; error: string };
+  | { tag: "FetchFailed"; error: HttpError };
+
+const userDecoder = Decode.object({
+  id: Decode.number,
+  name: Decode.string,
+});
 
 export const page: PageConfig<Model, Msg, Shared, { id: number }> = {
-  init: (params) => [
+  init: (params) => withFx(
     { id: params.id, user: null, loading: true, error: null },
-    [http({
+    http({
       url: `/api/users/${params.id}`,
-      onOk: (user) => ({ tag: "GotUser", user }),
-      onError: (error) => ({ tag: "FetchError", error }),
-    })],
-  ],
+      decoder: userDecoder,
+      toMsg: (r) => r.tag === "Ok"
+        ? { tag: "GotUser", user: r.value }
+        : { tag: "FetchFailed", error: r.error },
+    }),
+  ),
 
   update: (model, msg) => {
     switch (msg.tag) {
       case "GotUser":
-        return { ...model, user: msg.user, loading: false };
-      case "FetchError":
-        return { ...model, error: msg.error, loading: false };
+        return noFx({ ...model, user: msg.user, loading: false });
+      case "FetchFailed":
+        return noFx({ ...model, error: HttpError.toString(msg.error), loading: false });
     }
   },
 
-  view: (model, _shared, _dispatch) => {
+  view: (model) => {
     if (model.loading) return h("p", {}, "Loading...");
-    if (model.error) return h("p", { class: "error" }, model.error);
+    if (model.error)   return h("p", { class: "error" }, model.error);
     return h("h1", {}, model.user!.name);
   },
 
   save: (model) => model,
-  load: (saved) => saved as Model,
+  load: (saved) => noFx(saved as Model),
 };
 ```
 
@@ -210,7 +225,7 @@ export const page: PageConfig<Model, Msg, Shared, { id: number }> = {
 Guards run before a page is initialized. Return `true` to allow access, or a URL string to redirect.
 
 ```ts
-import { page, route } from "superapp/router";
+import { page, route } from "teelm/router";
 
 page(route("/admin"), adminPage, {
   guard: (params, shared) => {
@@ -221,7 +236,7 @@ page(route("/admin"), adminPage, {
 });
 ```
 
-Guards can chain: if a redirect target also has a guard, it will be evaluated (up to 5 levels deep to prevent infinite loops).
+Guards can chain: if a redirect target also has a guard, it will be evaluated (up to 5 levels deep to prevent infinite loops; if the chain exhausts, the router falls through to `notFound`).
 
 When a guard redirects, the browser URL is updated via `history.replaceState` so the user sees the final URL.
 
@@ -247,14 +262,15 @@ const router = createRouter<Shared>({
 
 ```ts
 interface Router<Shared> {
-  init(url?: URL): RouterModel<Shared> | [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
-  update(model: RouterModel<Shared>, msg: RouterMsg<Shared>): ...;
+  init(url?: URL): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
+  update(model: RouterModel<Shared>, msg: RouterMsg<Shared>):
+    readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>];
   view(model: RouterModel<Shared>, dispatch: Dispatch<RouterMsg<Shared>>): VNode;
-  subscriptions(model: RouterModel<Shared>): Sub<RouterMsg<Shared>>[];
+  subscriptions(model: RouterModel<Shared>): Subs<RouterMsg<Shared>>;
   listen(): Sub<RouterMsg<Shared>>;
   navigate(url: string, replace?: boolean): Effect<RouterMsg<Shared>>;
   updateShared(fn: (s: Shared) => Shared): RouterMsg<Shared>;
-  href(routeDef: RouteDef<P>, params: P): string;
+  href<P>(routeDef: RouteDef<P>, params: P): string;
 }
 ```
 
@@ -276,7 +292,14 @@ Dispatch `router.updateShared()` to modify shared state from any page:
 
 ```ts
 // In a page's update, return an effect that updates shared state
-dispatch(router.updateShared((s) => ({ ...s, user: loggedInUser })));
+import { dispatchMsg } from "teelm/fx";
+
+return withFx(
+  model,
+  // Cast through the router-Msg <-> page-Msg boundary if needed,
+  // or dispatch directly from a lifecycle hook (onMount, afterUpdate).
+  dispatchMsg(router.updateShared((s) => ({ ...s, user: loggedInUser }))),
+);
 ```
 
 ---
@@ -286,7 +309,7 @@ dispatch(router.updateShared((s) => ({ ...s, user: loggedInUser })));
 Zero-boilerplate convenience that wires router, layout, and app together.
 
 ```ts
-import { routerApp, routerLink } from "superapp/router";
+import { routerApp, routerLink } from "teelm/router";
 
 routerApp({
   router,
@@ -299,8 +322,8 @@ routerApp({
       h("main", {}, content),
     ),
   node: document.getElementById("app")!,
-  url: new URL("https://example.test/users"),
-  listen: false,
+  url: new URL("https://example.test/users"),  // optional: deterministic boot
+  listen: false,                                // optional: skip popstate listener
   debug: true,
 });
 ```
@@ -328,14 +351,29 @@ Returns `{ href: string, onClick: (e: MouseEvent) => void }`. The onClick handle
 - Dispatches a `popstate` event so the router picks up the change
 - Respects modifier keys (Ctrl/Meta/Shift + click opens in new tab normally)
 
-### Type-safe URLs with href()
+### Generating URLs
 
-Use `router.href()` to generate type-safe URLs from route definitions:
+Use `router.href()` to generate URL strings from a `RouteDef`:
 
 ```ts
-const url = router.href(userRoute, { id: "42" });
+const url = router.href(userRoute, { id: 42 });
 // "/users/42"
+
+h("a", { ...routerLink(url) }, "View user 42")
 ```
+
+If your code paths require a typed `Path` or `Url`, the branded constructors from `teelm/functional` give you opaque values without unchecked passthrough:
+
+```ts
+import { Path, Url } from "teelm/functional";
+
+const userPath: Path = Path.fromString(router.href(userRoute, { id: 42 }));
+const homepage: Url | null = Url.parse("https://example.com").tag === "Just"
+  ? Url.parse("https://example.com").value as Url
+  : null;
+```
+
+`Path.fromString` normalizes the leading `/`, while `Path.parse` rejects empty strings. `Url.parse` returns `Maybe<Url>` and rejects malformed inputs.
 
 ---
 
@@ -347,12 +385,12 @@ The CLI can generate router code from your file structure.
 
 Place page files in `src/pages/`. Each file must export `page` as a `PageConfig`.
 
-Route discovery conventions used by `superapp gen`:
+Route discovery conventions used by `teelm gen`:
 
 - lowercase `index.ts` / `index.tsx` maps to the parent directory route
 - files or folders prefixed with `_` are ignored
 - `*.component.ts(x)`, `*.test.ts(x)`, `*.spec.ts(x)`, and `*.d.ts` are ignored
-- project-root `.superappignore` adds extra ignore patterns
+- project-root `.teelmignore` adds extra ignore patterns
 
 ```
 src/pages/
@@ -383,14 +421,14 @@ src/pages/
 ### Running gen
 
 ```bash
-superapp gen
+teelm gen
 ```
 
 This scans `src/pages/`, sorts routes (static before dynamic, more-specific first), and writes `src/generated/router.ts`:
 
 ```ts
-// AUTO-GENERATED by superapp gen -- do not edit
-import { createRouter, route, page, str, int } from "superapp/router";
+// AUTO-GENERATED by teelm gen -- do not edit
+import { createRouter, route, page, str, int } from "teelm/router";
 import type { Shared } from "../shared";
 import { initialShared } from "../shared";
 
@@ -439,13 +477,28 @@ export const initialShared: Shared = {
 ## Adding Pages via CLI
 
 ```bash
-superapp add "users/[id:int]/Edit"
+teelm add "users/[id:int]/Edit"
 ```
 
-This creates `src/pages/users/[id:int]/Edit.ts` with a scaffold and automatically runs `superapp gen` to update the router.
+This creates `src/pages/users/[id:int]/Edit.ts` with a scaffold and automatically runs `teelm gen` to update the router. The generated scaffold uses tuple-only `init`/`update`:
+
+```ts
+import { h, noFx, type Dispatch } from "teelm";
+import { type PageConfig } from "teelm/router";
+import type { Shared } from "../../../shared";
+
+export const page: PageConfig<{ id: number }, never, Shared, { id: number }> = {
+  init: (params) => noFx({ ...params }),
+  update: (model) => noFx(model),
+  view: (model, shared) =>
+    h("div", { class: "prose max-w-none" },
+      h("h1", {}, "/users/:id/edit"),
+    ),
+};
+```
 
 Use `--jsx` to generate `.tsx` files:
 
 ```bash
-superapp add "Dashboard" --jsx
+teelm add "Dashboard" --jsx
 ```

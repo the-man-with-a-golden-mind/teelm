@@ -77,13 +77,13 @@ function generatePageTs(routePath: string, params: ParsedParam[], pageFilePath: 
   const relPath = relativeImportPath(pageFilePath);
   const hasParams = params.length > 0;
 
-  return `import { h, type Dispatch } from "superapp";
-import { type PageConfig } from "superapp/router";
+  return `import { h, noFx, type Dispatch } from "teelm";
+import { type PageConfig } from "teelm/router";
 import type { Shared } from "${relPath}shared";
 
 export const page: PageConfig<${hasParams ? paramsType : "{}"}, never, Shared, ${paramsType}> = {
-  init: (${hasParams ? "params" : ""}) => (${hasParams ? "{ ...params }" : "{}"}),
-  update: (model) => model,
+  init: (${hasParams ? "params" : ""}) => noFx(${hasParams ? "{ ...params }" : "{}"}),
+  update: (model) => noFx(model),
   view: (model, shared) =>
     h("div", { class: "prose max-w-none" },
       h("h1", {}, "${routePath}"),
@@ -97,12 +97,13 @@ function generatePageTsx(routePath: string, params: ParsedParam[], pageFilePath:
   const relPath = relativeImportPath(pageFilePath);
   const hasParams = params.length > 0;
 
-  return `import { type PageConfig } from "superapp/router";
+  return `import { noFx } from "teelm";
+import { type PageConfig } from "teelm/router";
 import type { Shared } from "${relPath}shared";
 
 export const page: PageConfig<${hasParams ? paramsType : "{}"}, never, Shared, ${paramsType}> = {
-  init: (${hasParams ? "params" : ""}) => (${hasParams ? "{ ...params }" : "{}"}),
-  update: (model) => model,
+  init: (${hasParams ? "params" : ""}) => noFx(${hasParams ? "{ ...params }" : "{}"}),
+  update: (model) => noFx(model),
   view: (model, shared) => (
     <div class="prose max-w-none">
       <h1>${routePath}</h1>
@@ -117,7 +118,7 @@ export async function run(args: string[]) {
   const pattern = args.find((a) => !a.startsWith("-"));
 
   if (!pattern) {
-    console.error("Usage: superapp add <route-pattern> [--jsx]");
+    console.error("Usage: teelm add <route-pattern> [--jsx]");
     process.exit(1);
   }
 

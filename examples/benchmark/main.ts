@@ -1,7 +1,7 @@
-// SuperApp vs Preact — Browser Benchmark
+// Teelm vs Preact — Browser Benchmark
 // Outputs results to the page and console
 
-import { h, text, app } from "superapp";
+import { h, text, app, noFx } from "teelm";
 import { h as ph, render as prender } from "preact";
 
 const out = document.getElementById("out")!;
@@ -69,8 +69,8 @@ function benchMount() {
     const saT = bench(() => {
       saR.innerHTML = "";
       app({
-        init: { items: Array.from({ length: N }, (_, i) => i) },
-        update: (s: any) => s,
+        init: noFx({ items: Array.from({ length: N }, (_, i) => i) }),
+        update: (s: any) => noFx(s),
         view: (s: any) =>
           h("table", {}, h("tbody", {},
             ...s.items.map((i: number) =>
@@ -108,8 +108,8 @@ function benchPatch() {
   function saRender(root: HTMLElement, items: number[]) {
     root.innerHTML = "";
     app({
-      init: { items },
-      update: (s: any) => s,
+      init: noFx({ items }),
+      update: (s: any) => noFx(s),
       view: (s: any) =>
         h("table", {}, h("tbody", {},
           ...s.items.map((i: number) => h("tr", { key: i }, h("td", {}, String(i)), h("td", {}, `#${i}`))),
@@ -158,8 +158,8 @@ function benchState() {
 
   const saR = document.createElement("div");
   const inst = app<{ n: number }, { tag: "I" }>({
-    init: { n: 0 },
-    update: (s) => ({ n: s.n + 1 }),
+    init: noFx({ n: 0 }),
+    update: (s) => noFx({ n: s.n + 1 }),
     view: (s) => h("div", {}, String(s.n)),
     node: saR,
   });
@@ -182,16 +182,16 @@ function benchMemory() {
   section("Memory — VNode Shape");
   const saNode = h("div", { class: "a", key: "k", id: "x" }, "child");
   const pNode = ph("div", { class: "a", key: "k", id: "x" }, "child");
-  print(`  SuperApp keys: ${Object.keys(saNode).join(", ")}  (${JSON.stringify(saNode).length} bytes)`);
+  print(`  Teelm keys: ${Object.keys(saNode).join(", ")}  (${JSON.stringify(saNode).length} bytes)`);
   print(`  Preact   keys: ${Object.keys(pNode as any).join(", ")}  (${JSON.stringify(pNode).length} bytes)`);
 }
 
 // ── Run ────────────────────────────────────────────────────────
 
 print("╔══════════════════════════════════════════════════════════════════╗");
-print("║          SuperApp vs Preact — Performance Benchmark            ║");
+print("║          Teelm vs Preact — Performance Benchmark            ║");
 print("╚══════════════════════════════════════════════════════════════════╝");
-print("  SA = SuperApp  |  P = Preact  |  █ = SA faster  ░ = P faster");
+print("  SA = Teelm  |  P = Preact  |  █ = SA faster  ░ = P faster");
 
 benchVNode();
 benchMount();

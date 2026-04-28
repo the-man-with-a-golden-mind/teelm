@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { app, h, text, type Dispatch } from "../src/hyperapp";
+import { app, h, text, noFx, type Dispatch } from "../src/teelm";
 
 let root: HTMLElement;
 
@@ -18,8 +18,8 @@ function flush(): Promise<void> {
 
 function mount<S>(init: S, viewFn: (s: Readonly<S>, d: Dispatch<{ tag: "Set"; s: S }>) => any) {
   return app<S, { tag: "Set"; s: S }>({
-    init,
-    update: (_, msg) => msg.s,
+    init: noFx(init),
+    update: (_, msg) => noFx(msg.s),
     view: viewFn,
     node: root,
   });
@@ -52,7 +52,7 @@ describe("DOM patching", () => {
 
     inst.dispatch({ tag: "Set", s: { title: null } });
     await flush();
-    // DOM property set to "" (not removed) — matches hyperapp behavior
+    // DOM property set to "" (not removed) — matches teelm behavior
     expect(root.querySelector("div")?.getAttribute("title")).toBe("");
   });
 
@@ -205,8 +205,8 @@ describe("events", () => {
   it("handles onClick", () => {
     let clicked = false;
     app<{}, never>({
-      init: {},
-      update: (s) => s,
+      init: noFx({}),
+      update: (s) => noFx(s),
       view: () => h("button", { id: "btn", onClick: () => { clicked = true; } }),
       node: root,
     });
@@ -220,8 +220,8 @@ describe("events", () => {
     type Msg = { tag: "Inc" };
 
     const inst = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s, d) =>
         h("div", {},
           h("button", {
@@ -244,8 +244,8 @@ describe("events", () => {
 describe("SVG", () => {
   it("creates SVG elements with correct namespace", () => {
     app<{}, never>({
-      init: {},
-      update: (s) => s,
+      init: noFx({}),
+      update: (s) => noFx(s),
       view: () =>
         h("svg", { width: "100", height: "100" },
           h("circle", { cx: "50", cy: "50", r: "40" }),
@@ -264,8 +264,8 @@ describe("value/checked/selected patching", () => {
   it("patches input value from DOM state", async () => {
     type Msg = { tag: "Set"; v: string };
     const inst = app<{ v: string }, Msg>({
-      init: { v: "hello" },
-      update: (_, msg) => ({ v: msg.v }),
+      init: noFx({ v: "hello" }),
+      update: (_, msg) => noFx({ v: msg.v }),
       view: (s) => h("input", { id: "inp", value: s.v }),
       node: root,
     });

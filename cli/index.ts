@@ -19,7 +19,7 @@ switch (cmd) {
     break;
   default:
     console.log(`
-superapp — Elm-inspired TypeScript framework
+teelm — Elm-inspired TypeScript framework
 
 Commands:
   new <name>         Create a new project

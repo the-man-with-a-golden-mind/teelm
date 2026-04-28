@@ -1,5 +1,5 @@
 {
-  "name": "@superapp/example-nested-tea",
+  "name": "@teelm/example-nested-tea",
   "private": true,
   "type": "module",
   "scripts": {

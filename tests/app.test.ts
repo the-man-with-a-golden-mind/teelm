@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { app, h, text, lazy, resolveClass, withFx, noFx, type Dispatch, type Effect, type Sub } from "../src/hyperapp";
+import { app, h, text, lazy, resolveClass, withFx, noFx, type Dispatch, type Effect, type Sub, type Subs } from "../src/teelm";
 
 let root: HTMLElement;
 
@@ -19,8 +19,8 @@ function flush(): Promise<void> {
 describe("app()", () => {
   it("renders initial state", () => {
     app<{ n: number }, never>({
-      init: { n: 42 },
-      update: (s) => s,
+      init: noFx({ n: 42 }),
+      update: (s) => noFx(s),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
     });
@@ -31,8 +31,8 @@ describe("app()", () => {
   it("updates on dispatch", async () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s, d) =>
         h("div", {},
           h("span", { id: "val" }, String(s.n)),
@@ -60,11 +60,11 @@ describe("app()", () => {
     ];
 
     const instance = app<{ done: boolean }, Msg>({
-      init: { done: false },
+      init: noFx({ done: false }),
       update: (s, msg) => {
         switch (msg.tag) {
-          case "Go": return [s, [myEffect]] as const;
-          case "Done": return { done: true };
+          case "Go": return withFx<{ done: boolean }, Msg>(s, myEffect);
+          case "Done": return noFx({ done: true });
         }
       },
       view: (s) => h("div", {}, s.done ? "done" : "pending"),
@@ -81,12 +81,10 @@ describe("app()", () => {
     let effectRan = false;
     type Msg = { tag: "X" };
 
+    const initEffect: Effect<Msg> = [(d) => { effectRan = true; }, null];
     app<{ n: number }, Msg>({
-      init: [
-        { n: 0 },
-        [[(d) => { effectRan = true; }, null] as const],
-      ] as const,
-      update: (s) => s,
+      init: withFx<{ n: number }, Msg>({ n: 0 }, initEffect),
+      update: (s) => noFx(s),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
     });
@@ -99,8 +97,8 @@ describe("app()", () => {
     type Msg = { tag: "Inc" };
 
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => {
         renderCount++;
         return h("div", {}, String(s.n));
@@ -134,8 +132,8 @@ describe("app()", () => {
 
     type State = { val: number; data: typeof item };
     const instance = app<State, { tag: "Update" }>({
-      init: { val: 1, data: item },
-      update: (s) => ({ ...s, val: s.val + 1 }),
+      init: noFx({ val: 1, data: item }),
+      update: (s) => noFx({ ...s, val: s.val + 1 }),
       view: (s) =>
         h("div", {}, [
           h("span", { id: "val" }, String(s.val)),
@@ -160,8 +158,8 @@ describe("app()", () => {
     type Msg = { tag: "Inc" };
 
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => {
         renderCount++;
         return h("div", {}, String(s.n));
@@ -183,8 +181,8 @@ describe("app()", () => {
   it("getState returns current state", () => {
     type Msg = { tag: "Set"; v: number };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (_, msg) => ({ n: msg.v }),
+      init: noFx({ n: 0 }),
+      update: (_, msg) => noFx({ n: msg.v }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
     });
@@ -197,8 +195,8 @@ describe("app()", () => {
   it("destroy stops rendering and clears DOM", async () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
     });
@@ -216,8 +214,8 @@ describe("app()", () => {
     type Msg = { tag: "Inc" };
 
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       onMount: ({ state, node }) => calls.push(`mount:${state.n}:${node.tagName}`),
       afterRender: ({ state, prevState }) =>
@@ -240,16 +238,16 @@ describe("app()", () => {
     ]);
   });
 
-  it("nullification destroys app", async () => {
+  it("explicit destroy() clears the DOM", async () => {
     type Msg = { tag: "Kill" };
-    const instance = app<{ n: number } | null, Msg>({
-      init: { n: 1 },
-      update: () => null as any,
-      view: (s) => h("div", {}, String((s as any)?.n ?? "dead")),
+    const instance = app<{ n: number }, Msg>({
+      init: noFx({ n: 1 }),
+      update: (s) => noFx(s),
+      view: (s) => h("div", {}, String(s.n)),
       node: root,
     });
 
-    instance.dispatch({ tag: "Kill" });
+    instance.destroy();
     await flush();
     expect(root.textContent).toBe("");
   });
@@ -259,8 +257,8 @@ describe("history (time-travel)", () => {
   it("tracks state history", () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       debug: { history: true },
@@ -276,8 +274,8 @@ describe("history (time-travel)", () => {
   it("goBack restores previous state", async () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       debug: { history: true },
@@ -295,8 +293,8 @@ describe("history (time-travel)", () => {
   it("goForward advances", async () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       debug: { history: true },
@@ -314,8 +312,8 @@ describe("history (time-travel)", () => {
   it("jumpTo goes to specific index", async () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       debug: { history: true },
@@ -334,8 +332,8 @@ describe("history (time-travel)", () => {
   it("respects maxHistory", () => {
     type Msg = { tag: "Inc" };
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       debug: { history: true, maxHistory: 3 },
@@ -352,11 +350,11 @@ describe("subscriptions", () => {
     type Msg = { tag: "X" };
 
     app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => s,
+      init: noFx({ n: 0 }),
+      update: (s) => noFx(s),
       view: (s) => h("div", {}, String(s.n)),
       subscriptions: () => [
-        [(_d, _p) => { started = true; return () => { }; }, {}],
+        [(_d: Dispatch<Msg>, _p: any) => { started = true; return () => { }; }, {}] as unknown as Sub<Msg>,
       ],
       node: root,
     });
@@ -369,11 +367,11 @@ describe("subscriptions", () => {
     type Msg = { tag: "Disable" };
 
     const instance = app<{ active: boolean }, Msg>({
-      init: { active: true },
-      update: () => ({ active: false }),
+      init: noFx({ active: true }),
+      update: () => noFx({ active: false }),
       view: (s) => h("div", {}, String(s.active)),
       subscriptions: (s) => [
-        s.active && [(_d, _p) => { return () => { stopped = true; }; }, {}],
+        s.active && ([(_d: Dispatch<Msg>, _p: any) => { return () => { stopped = true; }; }, {}] as unknown as Sub<Msg>),
       ],
       node: root,
     });
@@ -388,14 +386,14 @@ describe("subscriptions", () => {
     type Msg = { tag: "Swap" };
 
     const instance = app<{ version: number }, Msg>({
-      init: { version: 1 },
-      update: (s) => ({ version: s.version + 1 }),
+      init: noFx({ version: 1 }),
+      update: (s) => noFx({ version: s.version + 1 }),
       view: () => h("div"),
       subscriptions: (s) => [
-        [(_dispatch, props: { handler: () => number }) => {
+        [(_dispatch: Dispatch<Msg>, props: { handler: () => number }) => {
           events.push(`start:${props.handler()}`);
           return () => events.push(`stop:${props.handler()}`);
-        }, { handler: () => s.version }],
+        }, { handler: () => s.version }] as unknown as Sub<Msg>,
       ],
       node: root,
     });
@@ -413,11 +411,11 @@ describe("subscriptions", () => {
     type Msg = never;
 
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => s,
+      init: noFx({ n: 0 }),
+      update: (s) => noFx(s),
       view: () => h("div"),
       subscriptions: () => [
-        [() => () => { cleaned = true; }, {}],
+        [() => () => { cleaned = true; }, {}] as unknown as Sub<Msg>,
       ],
       node: root,
     });
@@ -433,8 +431,8 @@ describe("middleware", () => {
     type Msg = { tag: "A" } | { tag: "B" };
 
     const instance = app<{ n: number }, Msg>({
-      init: { n: 0 },
-      update: (s) => ({ n: s.n + 1 }),
+      init: noFx({ n: 0 }),
+      update: (s) => noFx({ n: s.n + 1 }),
       view: (s) => h("div", {}, String(s.n)),
       node: root,
       middleware: (next) => (msg) => {
@@ -462,14 +460,15 @@ describe("resolveClass()", () => {
 describe("withFx / noFx", () => {
   it("noFx wraps state in tuple", () => {
     const result = noFx({ n: 1 });
-    expect(result).toEqual([{ n: 1 }, []]);
+    expect(result[0]).toEqual({ n: 1 });
+    expect(result[1]).toEqual([] as any);
     expect(Array.isArray(result)).toBe(true);
   });
 
   it("withFx creates state + effects tuple", () => {
     const fx: Effect<string> = [() => { }, null];
-    const result = withFx({ n: 1 }, fx);
+    const result = withFx<{ n: number }, string>({ n: 1 }, fx);
     expect(result[0]).toEqual({ n: 1 });
-    expect(result[1]).toEqual([fx]);
+    expect(result[1] as readonly Effect<string>[]).toEqual([fx]);
   });
 });

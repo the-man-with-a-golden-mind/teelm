@@ -1,24 +1,28 @@
 {
-  "name": "superapp",
+  "name": "teelm",
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/hyperapp.ts",
+    ".": "./src/teelm.ts",
     "./fx": "./src/fx.ts",
     "./subs": "./src/subs.ts",
     "./debugger": "./src/debugger.ts",
     "./router": "./src/router.ts",
     "./jsx-runtime": "./src/jsx-runtime.ts",
-    "./testing": "./src/testing.ts"
+    "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
+    "./testing": "./src/testing.ts",
+    "./functional": "./src/functional.ts",
+    "./task": "./src/task.ts",
+    "./events": "./src/events.ts"
   },
   "bin": {
-    "superapp": "./cli/index.ts"
+    "teelm": "./cli/index.ts"
   },
-  "main": "./dist/hyperapp.js",
-  "types": "./dist/hyperapp.d.ts",
+  "main": "./dist/teelm.js",
+  "types": "./dist/teelm.d.ts",
   "files": ["dist", "src"],
   "scripts": {
-    "build": "rm -rf dist && bun build src/hyperapp.ts src/fx.ts src/subs.ts src/debugger.ts src/router.ts src/jsx-runtime.ts src/testing.ts --outdir dist --format esm --target browser && tsc --project tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/teelm.ts src/fx.ts src/subs.ts src/debugger.ts src/router.ts src/jsx-runtime.ts src/jsx-dev-runtime.ts src/testing.ts src/functional.ts src/task.ts src/events.ts --root src --outdir dist --format esm --target browser && tsc --project tsconfig.build.json",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "bench": "bun run scripts/benchmark.ts"

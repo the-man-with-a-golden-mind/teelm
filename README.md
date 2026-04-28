@@ -6,18 +6,27 @@
 
 **Elm-inspired TypeScript framework**
 
-[![version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/nickabal/superapp)
+[![version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/nickabal/teelm)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6)](https://www.typescriptlang.org/)
 [![tests](https://img.shields.io/badge/tests-bun%20test-yellow)](https://bun.sh)
 
-SuperApp is a functional, type-safe web framework built on The Elm Architecture. It brings Elm's proven patterns -- immutable state, message-driven updates, effects as data, and declarative subscriptions -- to TypeScript with zero runtime dependencies.
+Teelm is a functional, type-safe web framework built on The Elm Architecture. It brings Elm's proven patterns -- immutable state, message-driven updates, effects as data, and declarative subscriptions -- to TypeScript with zero runtime dependencies.
 
 ---
 
 ## Feature Highlights
 
 - **The Elm Architecture (TEA)** -- State, Update, View with immutable state and discriminated union messages
+- **Tuple-only init/update** -- `init` and `update` always return `[state, cmd]`. Use `noFx(state)` for no effects.
+- **Branded `Cmd<Msg>` & `Sub<Msg>`** -- only constructable through helpers (`none`, `withFx`, `batch`, `mapCmd`)
+- **`Result` / `Maybe` / `Decoder`** in `teelm/functional` for principled error handling
+- **`Task<E, T>`** in `teelm/task` for composable async operations (Elm-style `andThen`/`map`/`mapError`)
+- **Typed event helpers** in `teelm/events` (`makeEvents(dispatch)`)
+- **Decoder-based HTTP** -- `http()` validates the body and surfaces a `Result<T, HttpError>` discriminated union (`BadUrl | Timeout | NetworkError | BadStatus | BadBody`)
+- **Storage as `Result`** -- `storageGet`/`storageSet` report quota/security errors instead of swallowing them
+- **Branded `Url` / `Path` / `RouteName`** in `teelm/functional` to prevent unvalidated string passthrough
+- **Always-frozen state** -- mutation bugs surface immediately, not only with `debug: true`. Opt-out via `freezeState: false`.
 - **Typed URL routing** -- Page protocol with typed parsers, guards, redirects, and page caching (like elm-spa)
 - **Page lifecycle & error boundaries** -- `onMount`, `onUnmount`, `afterUpdate`, and per-page fallback UI
 - **Effects & Subscriptions** -- HTTP, timers, localStorage, WebSocket, keyboard, resize, animation frames
@@ -32,10 +41,10 @@ SuperApp is a functional, type-safe web framework built on The Elm Architecture.
 ## Quick Start
 
 ```bash
-bunx superapp new my-app
+bunx teelm new my-app
 cd my-app
 bun install
-bunx superapp dev
+bunx teelm dev
 ```
 
 This scaffolds a project with Vite, Tailwind CSS v4, a home page, an about page, a 404 page, and a generated router.
@@ -47,20 +56,21 @@ This scaffolds a project with Vite, Tailwind CSS v4, a home page, an about page,
 ### 1. State, Update, View
 
 The fundamental TEA cycle: define your state, messages, update function, and view.
+`init` and `update` always return a tuple `[state, cmd]`. Use `noFx(state)` when there are no effects.
 
 ```ts
-import { app, h, type Dispatch } from "superapp";
+import { app, h, noFx, type Dispatch, type Init, type UpdateResult } from "teelm";
 
 interface State { count: number }
 
 type Msg = { tag: "Inc" } | { tag: "Dec" };
 
-const init: State = { count: 0 };
+const init: Init<State, Msg> = noFx({ count: 0 });
 
-function update(state: State, msg: Msg): State {
+function update(state: State, msg: Msg): UpdateResult<State, Msg> {
   switch (msg.tag) {
-    case "Inc": return { ...state, count: state.count + 1 };
-    case "Dec": return { ...state, count: state.count - 1 };
+    case "Inc": return noFx({ ...state, count: state.count + 1 });
+    case "Dec": return noFx({ ...state, count: state.count - 1 });
   }
 }
 
@@ -86,8 +96,14 @@ type Effect<Msg, Props = unknown> = readonly [EffectFn<Msg, Props>, Props];
 ```
 
 ```ts
-import { withFx } from "superapp";
-import { delay, http } from "superapp/fx";
+import { withFx, noFx } from "teelm";
+import { delay, http } from "teelm/fx";
+import { Decode } from "teelm/functional";
+
+const usersDecoder = Decode.array(Decode.object({
+  id: Decode.number,
+  name: Decode.string,
+}));
 
 function update(state: State, msg: Msg) {
   switch (msg.tag) {
@@ -98,26 +114,33 @@ function update(state: State, msg: Msg) {
       return withFx(state,
         http({
           url: "/api/users",
-          onOk:    (data) => ({ tag: "GotUsers", users: data }),
-          onError: (err)  => ({ tag: "FetchFailed", error: err }),
+          decoder: usersDecoder,
+          // result: Result<User[], HttpError> — pattern-match on tag
+          toMsg: (result) => result.tag === "Ok"
+            ? { tag: "GotUsers", users: result.value }
+            : { tag: "FetchFailed", error: result.error },
         }),
       );
 
     case "Inc":
-      return { ...state, count: state.count + 1 };
+      return noFx({ ...state, count: state.count + 1 });
   }
 }
 ```
+
+`HttpError` is a discriminated union (`BadUrl | Timeout | NetworkError | BadStatus | BadBody`) — you can branch on `error.tag` for precise messaging without parsing strings.
 
 ### 3. Subscriptions
 
 Declarative event sources. Return active subscriptions based on state; the runtime manages start/stop.
 
 ```ts
-import { interval, onKeyDown } from "superapp/subs";
-import type { Sub } from "superapp";
+import { interval, onKeyDown } from "teelm/subs";
+import type { Subs } from "teelm";
 
-function subscriptions(state: State): Sub<Msg>[] {
+function subscriptions(state: State): Subs<Msg> {
+  // Subs<Msg> allows falsy entries (`false | null | undefined`) for ergonomic
+  // conditional subs — they are filtered by the runtime.
   return [
     state.auto && interval(1000, { tag: "Tick" }),
     onKeyDown((key) => ({ tag: "KeyPressed", key })),
@@ -145,7 +168,7 @@ app({
     }
   },
   onUnmount: () => {
-    document.title = "SuperApp";
+    document.title = "Teelm";
   },
   node: document.getElementById("app")!,
 });
@@ -156,7 +179,7 @@ app({
 File-based routing with typed URL parsers and a Page protocol.
 
 ```ts
-import { createRouter, routerApp, routerLink, route, page, str, int } from "superapp/router";
+import { createRouter, routerApp, routerLink, route, page, str, int } from "teelm/router";
 
 // Define typed routes
 const homeRoute   = route("/");
@@ -205,12 +228,12 @@ If you need deterministic bootstrapping outside the browser's current URL, `rout
 
 ### Page File Conventions
 
-`superapp gen` treats only route files in `src/pages/` as pages. The generator skips:
+`teelm gen` treats only route files in `src/pages/` as pages. The generator skips:
 
 - files and directories prefixed with `_`
 - `*.component.ts(x)`
 - `*.test.ts(x)`, `*.spec.ts(x)`, and `*.d.ts`
-- patterns listed in project-root `.superappignore`
+- patterns listed in project-root `.teelmignore`
 
 Use `src/components/` or `src/lib/` for shared non-route code. Lowercase `index.ts(x)` is supported as a route entrypoint.
 
@@ -228,7 +251,7 @@ Configure `tsconfig.json`:
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "superapp"
+    "jsxImportSource": "teelm"
   }
 }
 ```
@@ -246,10 +269,10 @@ const view = (state: State, dispatch: Dispatch<Msg>) => (
 
 ### 6. Nested TEA (Composition)
 
-Compose child modules with `mapDispatch`, `mapEffect`, and `mapSub`:
+Compose child modules with `mapDispatch`, `mapCmd`, and `mapSub`:
 
 ```ts
-import { mapDispatch, mapEffect, mapSub } from "superapp";
+import { mapDispatch, mapCmd, mapSub } from "teelm";
 import * as Counter from "./counter";
 
 type Msg = { tag: "Child"; msg: Counter.Msg };
@@ -260,19 +283,74 @@ Counter.view(
   mapDispatch(dispatch, (m: Counter.Msg): Msg => ({ tag: "Child", msg: m })),
 );
 
-// In update, map child effects back:
+// In update, lift the child Cmd into the parent's Msg space:
 const [childState, childCmd] = Counter.update(state.child, msg.msg);
 return [
   { ...state, child: childState },
-  childCmd.map((fx) => mapEffect(fx, (m) => ({ tag: "Child", msg: m }))),
+  mapCmd(childCmd, (m): Msg => ({ tag: "Child", msg: m })),
 ];
+```
+
+### 7. Tasks (composable async)
+
+`Task<E, T>` describes async work that may fail with `E` or succeed with `T`. Tasks compose via `andThen`/`map`/`mapError`, so you don't need an intermediate `Msg` for every step in a chain.
+
+```ts
+import { Task } from "teelm/task";
+import { withFx } from "teelm";
+
+const fetchAuth = Task.fromPromise(
+  () => fetch("/api/auth").then(r => r.json()),
+  (e) => ({ tag: "AuthFailed" as const, message: String(e) }),
+);
+
+const fetchUser = (token: string) => Task.fromPromise(
+  () => fetch(`/api/me?t=${token}`).then(r => r.json()),
+  (e) => ({ tag: "UserFailed" as const, message: String(e) }),
+);
+
+const loadCurrentUser = Task.andThen(fetchAuth, ({ token }) => fetchUser(token));
+
+// In update:
+return withFx(state, Task.attempt(loadCurrentUser, (r) => ({ tag: "GotUser", r })));
+```
+
+### 8. Typed event helpers
+
+```ts
+import { makeEvents } from "teelm/events";
+
+function view(state: State, dispatch: Dispatch<Msg>) {
+  const E = makeEvents(dispatch);
+  return h("form", E.onSubmit({ tag: "Save" }),
+    h("input", E.onInput((value) => ({ tag: "SetName", value }))),
+    h("button", E.onClick({ tag: "Save" }), "Save"),
+  );
+}
+```
+
+### 9. Decoders & branded URLs
+
+```ts
+import { Decode, Url, Path } from "teelm/functional";
+
+// Validate untrusted JSON before it reaches your model
+const userDecoder = Decode.object({
+  id: Decode.number,
+  name: Decode.string,
+  email: Decode.optional(Decode.string),
+});
+
+// Branded types prevent passing raw strings where validated values are required
+const u: Url = Url.parse("https://example.com").value!;
+const p: Path = Path.fromString("/users/42");
 ```
 
 ---
 
 ## API Reference
 
-### `superapp` (core)
+### `teelm` (core)
 
 | Export | Description |
 |--------|-------------|
@@ -280,18 +358,21 @@ return [
 | `text(value)` | Create a text VNode |
 | `memo(component, props)` | Memoized component (skips re-render if props unchanged) |
 | `lazy(view, data)` | Lazy VNode (alias for memo pattern) |
-| `app(config)` | Mount an application, returns `AppInstance`; config supports `onMount`, `afterRender`, `onUnmount` |
-| `noFx(state)` | Wrap state with no effects: `[state, []]` |
-| `withFx(state, ...effects)` | Wrap state with effects: `[state, effects]` |
+| `app(config)` | Mount an application, returns `AppInstance`; config supports `onMount`, `afterRender`, `onUnmount`, `freezeState` |
+| `noFx(state)` | Wrap state with no effects: `[state, none]` |
+| `withFx(state, ...effects)` | Wrap state with effects: `[state, Cmd<Msg>]` |
 | `batch(commands)` | Merge multiple `Cmd` arrays into one |
-| `none` | Empty command: `[]` |
+| `none` | Empty command (Cmd&lt;never&gt;, polymorphic) |
 | `mapEffect(effect, fn)` | Transform an effect's message type |
+| `mapCmd(cmd, fn)` | Transform every effect in a Cmd |
 | `mapSub(sub, fn)` | Transform a subscription's message type |
 | `mapDispatch(dispatch, fn)` | Transform a dispatch function's message type |
 | `batchSubs(...subs)` | Merge subscriptions from multiple sources |
 | `resolveClass(value)` | Resolve class values (string, array, or object) |
+| `type Init<S, Msg>`, `Update<S, Msg>`, `UpdateResult<S, Msg>` | Tuple-only types: `readonly [S, Cmd<Msg>]` |
+| `type Cmd<Msg>`, `Sub<Msg, P>`, `Subs<Msg>` | Branded; `Subs<Msg>` allows falsy entries |
 
-### `superapp/testing`
+### `teelm/testing`
 
 | Export | Description |
 |--------|-------------|
@@ -301,20 +382,56 @@ return [
 | `createDispatchSpy()` | Record dispatched messages in tests |
 | `runEffect(effect, dispatch)` | Execute an effect tuple with its props |
 
-### `superapp/fx` (effects)
+### `teelm/fx` (effects)
 
 | Export | Description |
 |--------|-------------|
-| `http({ url, options?, expect?, onOk, onError })` | Fetch HTTP resource (JSON or text) |
+| `http({ url, decoder, toMsg, options?, expect?, timeoutMs? })` | Fetch + decode; dispatches `Result<T, HttpError>` |
 | `delay(ms, msg)` | Dispatch a message after a delay |
 | `navigate(url, replace?)` | Push or replace browser history |
-| `storageSet(key, value)` | Write to localStorage |
-| `storageGet(key, onResult)` | Read from localStorage |
+| `storageSet(key, value, toMsg?)` | Write to localStorage; optional `Result<undefined, StorageError>` callback |
+| `storageGet({ key, decoder, json?, toMsg })` | Read + decode; dispatches `Result<T \| undefined, StorageError \| string>` |
 | `log(...args)` | Console.log (debug effect) |
 | `dispatchMsg(msg)` | Dispatch a message as an effect |
 | `compactEffects(...effects)` | Filter out falsy effects from a list |
+| `type StorageError` | `QuotaExceeded \| SecurityError \| Unavailable \| Unknown` |
 
-### `superapp/subs` (subscriptions)
+### `teelm/functional` (Result, Maybe, Decoder, brands)
+
+| Export | Description |
+|--------|-------------|
+| `Result.ok / err / map / mapError / andThen / withDefault / toMaybe` | Discriminated union for fallible computations |
+| `Maybe.just / nothing / map / andThen / withDefault / fromNullable` | Optional values |
+| `Decode.string / number / boolean / null / unknown` | Primitive decoders |
+| `Decode.array / field / optional / oneOf / object / map / andThen` | Decoder combinators |
+| `Decode.fromJsonString(decoder)` | Parse JSON text and decode |
+| `HttpError` constructors + `.toString()` | `BadUrl \| Timeout \| NetworkError \| BadStatus \| BadBody` |
+| `Url.parse / fromString / toString / isAbsolute` | Branded URL strings |
+| `Path.parse / fromString / toString` | Branded path strings |
+| `RouteName.fromString / toString` | Branded route name strings |
+| `Opaque<T, K>`, `brand<T, K>(val)` | Build your own branded type |
+| `pipe(x, ...fns)` | Left-to-right function composition |
+
+### `teelm/task` (Task&lt;E, T&gt;)
+
+| Export | Description |
+|--------|-------------|
+| `Task.succeed(v) / fail(e)` | Constant tasks |
+| `Task.fromTry(fn, onError)` | Wrap a sync thunk |
+| `Task.fromPromise(create, onError)` | Wrap a Promise; rejections become Err |
+| `Task.fromPromiseResult(create)` | Wrap a Promise&lt;Result&gt; |
+| `Task.map / mapError / andThen / onError` | Compose tasks |
+| `Task.sequence(tasks) / Task.all(tasks)` | Run in series / parallel |
+| `Task.attempt(task, toMsg)` | Effect that always dispatches a Result message |
+| `Task.perform(task, toMsg)` | Like `attempt` but for `Task<never, T>` |
+
+### `teelm/events` (typed event helpers)
+
+| Export | Description |
+|--------|-------------|
+| `makeEvents(dispatch)` | Returns object with `onClick`, `onInput`, `onChange`, `onChecked`, `onSubmit`, `onSubmitWith`, `onKeyDown`, `onKeyUp`, `onEnter`, `onEscape`, `onFocus`, `onBlur`, `onClickWith`, `onDoubleClick` |
+
+### `teelm/subs` (subscriptions)
 
 | Export | Description |
 |--------|-------------|
@@ -328,7 +445,7 @@ return [
 | `onEvent(event, msg, target?)` | Generic DOM event listener |
 | `websocket({ url, onMessage, onOpen?, onClose?, onError? })` | WebSocket connection |
 
-### `superapp/router`
+### `teelm/router`
 
 | Export | Description |
 |--------|-------------|
@@ -348,7 +465,7 @@ return [
 | `routerApp({ router, layout, node, url?, listen?, debug? })` | Boot an app with routing, optional deterministic URL bootstrap |
 | `routerLink(url)` | Returns `{ href, onClick }` for SPA links |
 
-### `superapp/debugger`
+### `teelm/debugger`
 
 | Export | Description |
 |--------|-------------|
@@ -359,23 +476,23 @@ return [
 ## CLI
 
 ```bash
-superapp new <name> [--jsx]     # Scaffold a new project
-superapp add <pattern> [--jsx]  # Add a page (auto-runs gen)
-superapp gen                    # Regenerate router from src/pages/
-superapp dev                    # Start Vite dev server (auto-runs gen)
-superapp build                  # Production build (auto-runs gen)
+teelm new <name> [--jsx]     # Scaffold a new project
+teelm add <pattern> [--jsx]  # Add a page (auto-runs gen)
+teelm gen                    # Regenerate router from src/pages/
+teelm dev                    # Start Vite dev server (auto-runs gen)
+teelm build                  # Production build (auto-runs gen)
 ```
 
 ### Page pattern syntax
 
 ```bash
-superapp add "About"                  # /about
-superapp add "users/[id]"             # /users/:id (string param)
-superapp add "users/[id:int]"         # /users/:id (integer param)
-superapp add "products/[slug]/Edit"   # /products/:slug/edit
-superapp add "Home"                   # / (special: root route)
-superapp add "NotFound"               # 404 handler
-superapp add "Blog/Index"             # /blog (Index maps to parent)
+teelm add "About"                  # /about
+teelm add "users/[id]"             # /users/:id (string param)
+teelm add "users/[id:int]"         # /users/:id (integer param)
+teelm add "products/[slug]/Edit"   # /products/:slug/edit
+teelm add "Home"                   # / (special: root route)
+teelm add "NotFound"               # 404 handler
+teelm add "Blog/Index"             # /blog (Index maps to parent)
 ```
 
 ### File naming conventions
@@ -391,12 +508,12 @@ superapp add "Blog/Index"             # /blog (Index maps to parent)
 
 CamelCase filenames are converted to kebab-case routes (e.g., `UserProfile.ts` -> `/user-profile`).
 
-Ignored by `superapp gen`:
+Ignored by `teelm gen`:
 
 - files and directories prefixed with `_`
 - `*.component.ts(x)`
 - `*.test.ts(x)`, `*.spec.ts(x)`, and `*.d.ts`
-- patterns from project-root `.superappignore`
+- patterns from project-root `.teelmignore`
 
 ---
 
@@ -421,7 +538,7 @@ bunx vite
 
 ## Comparison
 
-| Feature | SuperApp | Elm | Hyperapp | React |
+| Feature | Teelm | Elm | Teelm | React |
 |---------|----------|-----|----------|-------|
 | Architecture | TEA | TEA | TEA | Components |
 | Language | TypeScript | Elm | JavaScript | JavaScript/TS |

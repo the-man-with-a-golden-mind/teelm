@@ -5,18 +5,18 @@ import {
   type PageConfig, type RouterModel, type RouterMsg, type Router,
   matchRoute, onRoute, type Route,
 } from "../src/router";
-import { h, type VNode, type Cmd, type Effect } from "../src/hyperapp";
+import { h, noFx, withFx, type VNode, type Cmd, type Effect } from "../src/teelm";
 
 // ══════════════════════════════════════════════════════════════
 // Helper: unwrap init/update result
 // ══════════════════════════════════════════════════════════════
 
-function model<S>(r: S | readonly [S, any]): S {
-  return Array.isArray(r) ? r[0] : r;
+function model<S>(r: readonly [S, any]): S {
+  return r[0];
 }
 
 function effects<M>(r: any): Effect<M>[] {
-  return Array.isArray(r) ? r[1] : [];
+  return Array.isArray(r) ? (r[1] as Effect<M>[]) : [];
 }
 
 function flush(): Promise<void> {
@@ -408,7 +408,7 @@ describe("route().toUrl()", () => {
 
 describe("page()", () => {
   const cfg: PageConfig<{}, never, {}, {}> = {
-    init: () => ({}), update: (m) => m, view: () => h("div", {}),
+    init: () => noFx({}), update: (m) => noFx(m), view: () => h("div", {}),
   };
 
   it("creates PageRoute with _tag", () => {
@@ -444,16 +444,16 @@ function simplePage<P extends Record<string, any>>(
   label: string,
 ): PageConfig<{ label: string; params: P }, string, TestShared, P> {
   return {
-    init: (params) => ({ label, params }),
-    update: (m, msg) => ({ ...m, label: msg }),
+    init: (params) => noFx({ label, params }),
+    update: (m, msg) => noFx({ ...m, label: msg }),
     view: (m, shared) => h("div", {}, `${m.label}:${shared.user}`),
     subscriptions: () => [],
   };
 }
 
 const notFoundCfg: PageConfig<{ path: string }, never, TestShared, { path: string }> = {
-  init: (p) => p,
-  update: (m) => m,
+  init: (p) => noFx(p),
+  update: (m) => noFx(m),
   view: (m) => h("div", {}, `404:${m.path}`),
 };
 
@@ -527,12 +527,13 @@ describe("router.init()", () => {
 
   it("returns effects from page init", () => {
     let ran = false;
-    const withFx: PageConfig<string, string, {}, {}> = {
-      init: () => ["m", [[(d: any) => { ran = true; d("ok"); }, null]]] as const,
-      update: (m, msg) => msg,
+    const initEffect: Effect<string> = [(d: any) => { ran = true; d("ok"); }, null];
+    const cfg: PageConfig<string, string, {}, {}> = {
+      init: () => withFx<string, string>("m", initEffect),
+      update: (m, msg) => noFx(msg),
       view: (m) => h("div", {}, m),
     };
-    const r = createRouter<{}>({ routes: [page(route("/"), withFx)], shared: {} });
+    const r = createRouter<{}>({ routes: [page(route("/"), cfg)], shared: {} });
     const result = r.init(U("/"));
     expect(Array.isArray(result)).toBe(true);
     const fx = effects(result);
@@ -563,9 +564,10 @@ describe("router.init()", () => {
     expect(fx[0]![1]).toEqual({ url: "/login?from=admin", replace: true });
   });
 
-  it("returns no effects when page init is plain model", () => {
-    const m = router.init(U("/"));
-    expect(Array.isArray(m)).toBe(false);
+  it("returns empty effects when page init has no effects", () => {
+    const result = router.init(U("/"));
+    expect(Array.isArray(result)).toBe(true);
+    expect(effects(result)).toHaveLength(0);
   });
 
   it("without notFound config, _page is null for unmatched", () => {
@@ -597,7 +599,7 @@ describe("router.update() — UrlChanged", () => {
   it("CRITICAL: same URL returns exact same model reference", () => {
     const m1 = model(router.init(U("/")));
     const result = router.update(m1, urlChanged("/"));
-    expect(result).toBe(m1); // same reference — prevents infinite re-render
+    expect(result[0]).toBe(m1); // same reference — prevents infinite re-render
   });
 
   it("CRITICAL: same route different params creates new page", () => {
@@ -611,8 +613,8 @@ describe("router.update() — UrlChanged", () => {
     const r = createRouter<{}>({
       routes: [
         page(route("/search", { term: q.str("") }), {
-          init: (params) => ({ term: params.term }),
-          update: (m: any) => m,
+          init: (params) => noFx({ term: params.term }),
+          update: (m: any) => noFx(m),
           view: () => h("div", {}),
         }),
       ],
@@ -663,14 +665,15 @@ describe("router.update() — UrlChanged", () => {
 
   it("returns init effects from new page", () => {
     let ran = false;
-    const withFx: PageConfig<string, string, TestShared, {}> = {
-      init: () => ["m", [[(d: any) => { ran = true; }, null]]] as const,
-      update: (m) => m, view: () => h("div", {}),
+    const fxEffect: Effect<string> = [(_d: any) => { ran = true; }, null];
+    const fxCfg: PageConfig<string, string, TestShared, {}> = {
+      init: () => withFx<string, string>("m", fxEffect),
+      update: (m) => noFx(m), view: () => h("div", {}),
     };
     const r = createRouter<TestShared>({
       routes: [
         page(route("/"), simplePage("home")),
-        page(route("/fx"), withFx),
+        page(route("/fx"), fxCfg),
       ],
       shared: { user: null },
     });
@@ -713,14 +716,15 @@ describe("router.update() — PageMsg", () => {
     const m: RouterModel<TestShared> = {
       shared: { user: null }, url: U("/"), _page: null, _cache: new Map(),
     };
-    expect(router.update(m, pageMsg("x"))).toBe(m);
+    expect(router.update(m, pageMsg("x"))[0]).toBe(m);
   });
 
   it("returns mapped effects from page update", () => {
     let effectRan = false;
+    const updateFxEffect: Effect<string> = [(_d: any) => { effectRan = true; }, null];
     const pageWithUpdateFx: PageConfig<string, string, TestShared, {}> = {
-      init: () => "init",
-      update: (_m, msg) => [msg, [[(d: any) => { effectRan = true; }, null]]] as const,
+      init: () => noFx("init"),
+      update: (_m, msg) => withFx<string, string>(msg, updateFxEffect),
       view: (m) => h("div", {}, m),
     };
     const r = createRouter<TestShared>({
@@ -781,13 +785,13 @@ describe("page lifecycle", () => {
   it("calls save on exit and init on entry", () => {
     const log: string[] = [];
     const pA: PageConfig<string, never, {}, {}> = {
-      init: () => { log.push("A:init"); return "A"; },
-      update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => { log.push("A:init"); return noFx("A"); },
+      update: (m) => noFx(m), view: (m) => h("div", {}, m),
       save: () => { log.push("A:save"); return "saved"; },
     };
     const pB: PageConfig<string, never, {}, {}> = {
-      init: () => { log.push("B:init"); return "B"; },
-      update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => { log.push("B:init"); return noFx("B"); },
+      update: (m) => noFx(m), view: (m) => h("div", {}, m),
     };
     const r = createRouter<{}>({ routes: [page(route("/a"), pA), page(route("/b"), pB)], shared: {} });
     const m1 = model(r.init(U("/a")));
@@ -797,13 +801,13 @@ describe("page lifecycle", () => {
 
   it("uses load() on return to cached page", () => {
     const pA: PageConfig<{ n: number }, never, {}, {}> = {
-      init: () => ({ n: 0 }),
-      update: (m) => m, view: (m) => h("div", {}, String(m.n)),
+      init: () => noFx({ n: 0 }),
+      update: (m) => noFx(m), view: (m) => h("div", {}, String(m.n)),
       save: (m) => m,
-      load: (saved) => saved as { n: number },
+      load: (saved) => noFx(saved as { n: number }),
     };
     const pB: PageConfig<string, never, {}, {}> = {
-      init: () => "B", update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => noFx("B"), update: (m) => noFx(m), view: (m) => h("div", {}, m),
     };
     const r = createRouter<{}>({ routes: [page(route("/a"), pA), page(route("/b"), pB)], shared: {} });
 
@@ -818,11 +822,11 @@ describe("page lifecycle", () => {
     const r = createRouter<{}>({
       routes: [
         page(route("/search", { term: q.str("") }), {
-          init: (params) => ({ term: params.term, visits: 1 }),
-          update: (m: any) => m,
+          init: (params) => noFx({ term: params.term, visits: 1 }),
+          update: (m: any) => noFx(m),
           view: () => h("div", {}),
           save: (m: any) => m,
-          load: (saved) => saved as { term: string; visits: number },
+          load: (saved) => noFx(saved as { term: string; visits: number }),
         }),
       ],
       shared: {},
@@ -842,13 +846,13 @@ describe("page lifecycle", () => {
   it("calls init (not load) when save returns undefined", () => {
     const log: string[] = [];
     const pA: PageConfig<string, never, {}, {}> = {
-      init: () => { log.push("init"); return "fresh"; },
-      update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => { log.push("init"); return noFx("fresh"); },
+      update: (m) => noFx(m), view: (m) => h("div", {}, m),
       save: () => { log.push("save"); return undefined; },
-      load: () => { log.push("load"); return "loaded"; },
+      load: () => { log.push("load"); return noFx("loaded"); },
     };
     const pB: PageConfig<string, never, {}, {}> = {
-      init: () => "B", update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => noFx("B"), update: (m) => noFx(m), view: (m) => h("div", {}, m),
     };
     const r = createRouter<{}>({ routes: [page(route("/a"), pA), page(route("/b"), pB)], shared: {} });
 
@@ -861,12 +865,12 @@ describe("page lifecycle", () => {
   it("calls init when page has save but no load", () => {
     const log: string[] = [];
     const pA: PageConfig<string, never, {}, {}> = {
-      init: () => { log.push("init"); return "A"; },
-      update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => { log.push("init"); return noFx("A"); },
+      update: (m) => noFx(m), view: (m) => h("div", {}, m),
       save: () => "saved-data", // save but no load
     };
     const pB: PageConfig<string, never, {}, {}> = {
-      init: () => "B", update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => noFx("B"), update: (m) => noFx(m), view: (m) => h("div", {}, m),
     };
     const r = createRouter<{}>({ routes: [page(route("/a"), pA), page(route("/b"), pB)], shared: {} });
     let m = model(r.init(U("/a")));
@@ -877,11 +881,11 @@ describe("page lifecycle", () => {
 
   it("does not call save when page has no save()", () => {
     const pA: PageConfig<string, never, {}, {}> = {
-      init: () => "A", update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => noFx("A"), update: (m) => noFx(m), view: (m) => h("div", {}, m),
       // no save
     };
     const pB: PageConfig<string, never, {}, {}> = {
-      init: () => "B", update: (m) => m, view: (m) => h("div", {}, m),
+      init: () => noFx("B"), update: (m) => noFx(m), view: (m) => h("div", {}, m),
     };
     const r = createRouter<{}>({ routes: [page(route("/a"), pA), page(route("/b"), pB)], shared: {} });
     let m = model(r.init(U("/a")));
@@ -892,13 +896,13 @@ describe("page lifecycle", () => {
   it("load receives correct params and shared", () => {
     let loadArgs: any;
     const pA: PageConfig<any, never, TestShared, { id: string }> = {
-      init: (p) => p,
-      update: (m) => m, view: () => h("div", {}),
+      init: (p) => noFx(p),
+      update: (m) => noFx(m), view: () => h("div", {}),
       save: (m) => m,
-      load: (saved, params, shared) => { loadArgs = { saved, params, shared }; return saved; },
+      load: (saved, params, shared) => { loadArgs = { saved, params, shared }; return noFx(saved); },
     };
     const pB: PageConfig<string, never, TestShared, {}> = {
-      init: () => "B", update: (m) => m, view: () => h("div", {}),
+      init: () => noFx("B"), update: (m) => noFx(m), view: () => h("div", {}),
     };
     const r = createRouter<TestShared>({
       routes: [page(route("/users/:id", { id: str }), pA), page(route("/b"), pB)],
@@ -920,8 +924,8 @@ describe("routerApp page hooks and error boundaries", () => {
 
     try {
       const crashPage: PageConfig<{ ok: boolean }, never, {}, {}> = {
-        init: () => ({ ok: true }),
-        update: (m) => m,
+        init: () => noFx({ ok: true }),
+        update: (m) => noFx(m),
         view: () => {
           throw new Error("boom");
         },
@@ -955,8 +959,8 @@ describe("routerApp page hooks and error boundaries", () => {
 
     try {
       const home: PageConfig<{ n: number }, "Inc", { flag: string }, {}> = {
-        init: () => ({ n: 0 }),
-        update: (m, msg) => ({ n: msg === "Inc" ? m.n + 1 : m.n }),
+        init: () => noFx({ n: 0 }),
+        update: (m, msg) => noFx({ n: msg === "Inc" ? m.n + 1 : m.n }),
         view: (m, shared) => h("div", { id: "home" }, `${shared.flag}:${m.n}`),
         onMount: ({ model, root }) => events.push(`mount:${model.n}:${root.textContent}`),
         afterUpdate: ({ model, prevModel, shared, prevShared, root }) => {
@@ -965,8 +969,8 @@ describe("routerApp page hooks and error boundaries", () => {
         onUnmount: ({ model }) => events.push(`unmount:${model.n}`),
       };
       const other: PageConfig<string, never, { flag: string }, {}> = {
-        init: () => "other",
-        update: (m) => m,
+        init: () => noFx("other"),
+        update: (m) => noFx(m),
         view: (m) => h("div", { id: "other" }, m),
       };
 
@@ -1158,8 +1162,8 @@ describe("router.view()", () => {
   it("dispatch in view wraps messages as @@router/PageMsg", () => {
     const r = createRouter<TestShared>({
       routes: [page(route("/"), {
-        init: () => ({}),
-        update: (m: any) => m,
+        init: () => noFx({}),
+        update: (m: any) => noFx(m),
         view: (_m: any, _shared: any, dispatch: any) =>
           h("button", { onClick: () => dispatch("clicked") }, "go"),
       })],
@@ -1177,8 +1181,8 @@ describe("router.view()", () => {
   it("passes shared state to page view", () => {
     const r = createRouter<TestShared>({
       routes: [page(route("/"), {
-        init: () => ({}),
-        update: (m: any) => m,
+        init: () => noFx({}),
+        update: (m: any) => noFx(m),
         view: (_m: any, shared: any) => h("div", {}, `user:${shared.user}`),
       })],
       shared: { user: "Alice" },
@@ -1204,7 +1208,7 @@ describe("router.subscriptions()", () => {
 
   it("returns empty when page has no subscriptions", () => {
     const r = createRouter<{}>({
-      routes: [page(route("/"), { init: () => ({}), update: (m: any) => m, view: () => h("div", {}) })],
+      routes: [page(route("/"), { init: () => noFx({}), update: (m: any) => noFx(m), view: () => h("div", {}) })],
       shared: {},
     });
     const m = model(r.init(U("/")));
@@ -1218,15 +1222,15 @@ describe("router.subscriptions()", () => {
     };
     const r = createRouter<{}>({
       routes: [page(route("/"), {
-        init: () => ({}), update: (m: any) => m, view: () => h("div", {}),
-        subscriptions: () => [[subRunner, {}]],
+        init: () => noFx({}), update: (m: any) => noFx(m), view: () => h("div", {}),
+        subscriptions: () => [[subRunner, {}] as any],
       })],
       shared: {},
     });
     const m = model(r.init(U("/")));
     const subs = r.subscriptions(m);
     expect(subs).toHaveLength(1);
-    const [runner, props] = subs[0] as [any, any];
+    const [runner, props] = subs[0] as unknown as [any, any];
     const msgs: any[] = [];
     const cleanup = runner((msg: any) => msgs.push(msg), props);
     cleanup();
@@ -1250,7 +1254,7 @@ describe("router.listen()", () => {
 
   it("fires UrlChanged immediately on subscribe", () => {
     const msgs: any[] = [];
-    const [runner, props] = router.listen() as [any, any];
+    const [runner, props] = router.listen() as unknown as [any, any];
     const cleanup = runner((msg: any) => msgs.push(msg), props);
     cleanup();
     expect(msgs.length).toBe(1);
@@ -1267,7 +1271,7 @@ describe("router.listen()", () => {
 
   it("cleanup removes popstate listener", () => {
     const msgs: any[] = [];
-    const [runner, props] = router.listen() as [any, any];
+    const [runner, props] = router.listen() as unknown as [any, any];
     const cleanup = runner((msg: any) => msgs.push(msg), props);
     msgs.length = 0; // clear initial fire
 
@@ -1427,7 +1431,7 @@ describe("routerLink()", () => {
 describe("edge cases", () => {
   it("router with zero routes → notFound", () => {
     const r = createRouter<{}>({ routes: [], shared: {}, notFound: {
-      init: (p: any) => p, update: (m: any) => m, view: () => h("div", {}, "nf"),
+      init: (p: any) => noFx(p), update: (m: any) => noFx(m), view: () => h("div", {}, "nf"),
     }});
     const m = model(r.init(U("/")));
     expect(m._page!.routeIdx).toBe(-1);
@@ -1442,8 +1446,8 @@ describe("edge cases", () => {
   it("route ordering: first match wins", () => {
     const r = createRouter<{}>({
       routes: [
-        page(route("/users/:id", { id: str }), { init: () => "dynamic", update: (m: any) => m, view: (m: any) => h("div", {}, m) }),
-        page(route("/users/special"), { init: () => "static", update: (m: any) => m, view: (m: any) => h("div", {}, m) }),
+        page(route("/users/:id", { id: str }), { init: () => noFx("dynamic"), update: (m: any) => noFx(m), view: (m: any) => h("div", {}, m) }),
+        page(route("/users/special"), { init: () => noFx("static"), update: (m: any) => noFx(m), view: (m: any) => h("div", {}, m) }),
       ],
       shared: {},
     });
@@ -1455,7 +1459,7 @@ describe("edge cases", () => {
   it("notFound page receives correct path", () => {
     const r = createRouter<{}>({
       routes: [], shared: {},
-      notFound: { init: (p: any) => p, update: (m: any) => m, view: () => h("div", {}) },
+      notFound: { init: (p: any) => noFx(p), update: (m: any) => noFx(m), view: () => h("div", {}) },
     });
     const m = model(r.init(U("/some/deep/path")));
     expect((m._page!.model as any).path).toBe("/some/deep/path");
@@ -1463,9 +1467,9 @@ describe("edge cases", () => {
 
   it("different notFound paths get different cache keys", () => {
     const r = createRouter<{}>({
-      routes: [page(route("/"), { init: () => "h", update: (m: any) => m, view: () => h("div", {}) })],
+      routes: [page(route("/"), { init: () => noFx("h"), update: (m: any) => noFx(m), view: () => h("div", {}) })],
       shared: {},
-      notFound: { init: (p: any) => p, update: (m: any) => m, view: () => h("div", {}), save: (m: any) => m },
+      notFound: { init: (p: any) => noFx(p), update: (m: any) => noFx(m), view: () => h("div", {}), save: (m: any) => m },
     });
     let m = model(r.init(U("/aaa")));
     m = model(r.update(m, { tag: "@@router/UrlChanged", url: U("/") }));
@@ -1478,8 +1482,8 @@ describe("edge cases", () => {
     let initShared: any;
     const r = createRouter<TestShared>({
       routes: [page(route("/"), {
-        init: (_p: any, shared: any) => { initShared = shared; return {}; },
-        update: (m: any) => m, view: () => h("div", {}),
+        init: (_p: any, shared: any) => { initShared = shared; return noFx({}); },
+        update: (m: any) => noFx(m), view: () => h("div", {}),
       })],
       shared: { user: "Test" },
     });
@@ -1491,8 +1495,8 @@ describe("edge cases", () => {
     let updateShared: any;
     const r = createRouter<TestShared>({
       routes: [page(route("/"), {
-        init: () => ({}),
-        update: (_m: any, _msg: any, shared: any) => { updateShared = shared; return {}; },
+        init: () => noFx({}),
+        update: (_m: any, _msg: any, shared: any) => { updateShared = shared; return noFx({}); },
         view: () => h("div", {}),
       })],
       shared: { user: "Test" },
@@ -1556,7 +1560,7 @@ describe("onRoute() (deprecated)", () => {
   it("fires for current path", () => {
     let got: string | undefined;
     history.replaceState(null, "", "/");
-    const [runner, props] = onRoute([{ path: location.pathname, handler: () => "matched" }]) as [any, any];
+    const [runner, props] = onRoute([{ path: location.pathname, handler: () => "matched" }]) as unknown as [any, any];
     const cleanup = runner((msg: string) => { got = msg; }, props);
     cleanup();
     expect(got).toBe("matched");
@@ -1568,7 +1572,7 @@ describe("onRoute() (deprecated)", () => {
     const [runner, props] = onRoute(
       [{ path: "/only", handler: () => "ok" }],
       (p) => `404:${p}`,
-    ) as [any, any];
+    ) as unknown as [any, any];
     const cleanup = runner((msg: string) => { got = msg; }, props);
     cleanup();
     history.replaceState(null, "", "/");

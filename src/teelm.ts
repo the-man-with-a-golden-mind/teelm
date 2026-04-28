@@ -1,4 +1,4 @@
-// SuperApp — Modern TypeScript Hyperapp
+// Teelm — Modern TypeScript Teelm
 // Elm-inspired, functional, type-safe, optimized
 
 // ── Constants ──────────────────────────────────────────────────
@@ -25,16 +25,30 @@ export type MemoView<P extends Record<string, any> = any> = (props: P) => VNode;
 
 export type Dispatch<Msg> = (msg: Msg | readonly Msg[]) => void;
 
+// `P = any` is intentional: it gives effect/sub *containers* (Cmd, Subs)
+// permissive variance so they can hold mixed-prop entries. Concrete creators
+// (delay, http, interval, …) preserve precise prop typing at the call site.
 export type EffectFn<Msg, P = any> = (dispatch: Dispatch<Msg>, props: P) => void;
 export type Effect<Msg, P = any> = readonly [EffectFn<Msg, P>, P];
 
-export type Cmd<Msg> = readonly Effect<Msg, any>[];
-export type SubFn<Msg, P = any> = (dispatch: Dispatch<Msg>, props: P) => () => void;
-export type Sub<Msg, P = any> = readonly [SubFn<Msg, P>, P] | false | null | undefined;
+// Branded so the only way to construct a Cmd<Msg> is via none/withFx/batch/mapEffect.
+declare const __cmdBrand: unique symbol;
+export type Cmd<Msg> = readonly Effect<Msg>[] & { readonly [__cmdBrand]: Msg };
 
-export type UpdateResult<S, Msg> = S | readonly [S, Cmd<Msg>];
+export type SubFn<Msg, P = any> = (dispatch: Dispatch<Msg>, props: P) => () => void;
+
+// Branded so a raw [fn, props] tuple is not assignable to Sub<Msg> without
+// going through a sub-creator helper. The brand is type-only and erased at runtime.
+declare const __subBrand: unique symbol;
+export type Sub<Msg, P = any> = readonly [SubFn<Msg, P>, P] & { readonly [__subBrand]: Msg };
+
+/** Subscriptions list — falsy entries are dropped, allowing ergonomic conditional subs. */
+export type Subs<Msg> = readonly (Sub<Msg> | false | null | undefined)[];
+
+// init/update are tuple-only. Use noFx(state) when there are no effects.
+export type UpdateResult<S, Msg> = readonly [S, Cmd<Msg>];
 export type Update<S, Msg> = (state: Readonly<S>, msg: Msg) => UpdateResult<S, Msg>;
-export type Init<S, Msg> = S | readonly [S, Cmd<Msg>];
+export type Init<S, Msg> = readonly [S, Cmd<Msg>];
 
 export interface MountHook<S, Msg> {
   state: Readonly<S>;
@@ -55,13 +69,15 @@ export interface AppConfig<S, Msg> {
   init: Init<S, Msg>;
   update: Update<S, Msg>;
   view: (state: Readonly<S>, dispatch: Dispatch<Msg>) => VNode;
-  subscriptions?: (state: Readonly<S>) => Sub<Msg>[];
+  subscriptions?: (state: Readonly<S>) => Subs<Msg>;
   node: HTMLElement;
   onMount?: (hook: MountHook<S, Msg>) => void;
   afterRender?: (hook: RenderHook<S, Msg>) => void;
   onUnmount?: (hook: UnmountHook<S>) => void;
   debug?: boolean | DebugConfig;
   middleware?: (dispatch: Dispatch<Msg>) => Dispatch<Msg>;
+  /** Disable deep-freezing state. Default: freeze always. Set false only for known hot paths. */
+  freezeState?: boolean;
 }
 
 export interface DebugConfig {
@@ -223,10 +239,15 @@ function pushChildren(raw: any[], out: VNode[]): void {
 
 // ── Update Result Helpers ──────────────────────────────────────
 
-export const none: Cmd<any> = [];
+// Single shared empty Cmd. Cast to Cmd<never> so the branded covariant type
+// position lets it satisfy any Cmd<Msg> — never is bottom.
+const EMPTY_CMD = Object.freeze([]) as unknown as Cmd<never>;
+
+/** Empty Cmd, polymorphic in Msg. */
+export const none: Cmd<never> = EMPTY_CMD;
 
 export function batch<Msg>(commands: readonly Cmd<Msg>[]): Cmd<Msg> {
-  const batchedEffects: Effect<Msg, any>[] = [];
+  const batchedEffects: Effect<Msg>[] = [];
   for (let i = 0; i < commands.length; i++) {
     const cmd = commands[i];
     if (cmd) {
@@ -235,18 +256,19 @@ export function batch<Msg>(commands: readonly Cmd<Msg>[]): Cmd<Msg> {
       }
     }
   }
-  return batchedEffects;
+  return batchedEffects as unknown as Cmd<Msg>;
 }
 
-export function noFx<S>(state: S): readonly [S, Cmd<any>] {
-  return [state, none];
+/** Wrap state with no effects. The Cmd<never> result satisfies any expected Cmd<Msg>. */
+export function noFx<S>(state: S): readonly [S, Cmd<never>] {
+  return [state, EMPTY_CMD];
 }
 
-export function withFx<S, const Fx extends readonly Effect<any, any>[]>(
+export function withFx<S, Msg>(
   state: S,
-  ...effects: Fx
-): readonly [S, Fx] {
-  return [state, effects];
+  ...effects: readonly Effect<Msg>[]
+): readonly [S, Cmd<Msg>] {
+  return [state, effects as unknown as Cmd<Msg>];
 }
 
 // ── Composition (Elm-style nested TEA) ─────────────────────────
@@ -271,10 +293,22 @@ export function mapEffect<A, B, P>(
   return [(dispatch, p) => runner(mapMsg(dispatch, fn), p), props];
 }
 
-export function mapSub<A, B, P>(sub: Sub<A, P>, fn: (a: A) => B): Sub<B, P> {
-  if (!sub) return sub as Sub<B>;
-  const [runner, props] = sub as [SubFn<A, P>, P];
-  return [(dispatch, p) => runner(mapMsg(dispatch, fn), p), props];
+export function mapCmd<A, B>(cmd: Cmd<A>, fn: (a: A) => B): Cmd<B> {
+  const out: Effect<B>[] = [];
+  for (let i = 0; i < cmd.length; i++) {
+    out.push(mapEffect(cmd[i]!, fn));
+  }
+  return out as unknown as Cmd<B>;
+}
+
+export function mapSub<A, B, P>(
+  sub: Sub<A, P> | false | null | undefined,
+  fn: (a: A) => B,
+): Sub<B, P> | false | null | undefined {
+  if (!sub) return sub as undefined;
+  const [runner, props] = sub as readonly [SubFn<A, P>, P];
+  const wrapped = (dispatch: Dispatch<B>, p: P) => runner(mapMsg(dispatch, fn), p);
+  return [wrapped, props] as unknown as Sub<B, P>;
 }
 
 export function mapDispatch<A, B>(
@@ -284,21 +318,17 @@ export function mapDispatch<A, B>(
   return mapMsg(dispatch, fn);
 }
 
-// batchSubs distinguishes a single Sub<Msg> ([fn, props]) from Sub<Msg>[]
-// by checking typeof item[0] === "function". This means a Sub<Msg>[] whose
-// first element is falsy (e.g. [false, sub]) would be misclassified as a
-// flat array and iterated item-by-item — which is acceptable since falsy
-// subs are filtered out anyway.
+/** Flatten lists of subs (with optional falsy entries) into a single Subs<Msg>. */
 export function batchSubs<Msg>(
-  ...args: (Sub<Msg> | Sub<Msg>[])[]
-): Sub<Msg>[] {
-  const out: Sub<Msg>[] = [];
+  ...args: readonly (Subs<Msg> | Sub<Msg> | false | null | undefined)[]
+): Subs<Msg> {
+  const out: (Sub<Msg> | false | null | undefined)[] = [];
   for (const item of args) {
     if (!item) continue;
     if (Array.isArray(item) && typeof item[0] === "function") {
       out.push(item as unknown as Sub<Msg>);
     } else if (Array.isArray(item)) {
-      for (const s of item as unknown as Sub<Msg>[]) {
+      for (const s of item as Subs<Msg>) {
         if (s) out.push(s);
       }
     }
@@ -325,10 +355,17 @@ function patchProp(
   isSvg: boolean,
 ): void {
   // Security Hardening: XSS Protection at VDOM layer
+  if (key === "innerHTML" || key === "outerHTML") {
+    return;
+  }
+
   if (key === "href" || key === "src" || key === "action" || key === "formAction") {
-    if (typeof newVal === "string" && newVal.trim().toLowerCase().startsWith("javascript:")) {
-      if (oldVal === "about:blank") return;
-      newVal = "about:blank";
+    if (typeof newVal === "string") {
+      const v = newVal.trim().toLowerCase();
+      if (v.startsWith("javascript:") || v.startsWith("data:") || v.startsWith("vbscript:")) {
+        if (oldVal === "about:blank") return;
+        newVal = "about:blank";
+      }
     }
   }
 
@@ -475,6 +512,13 @@ function resolveVNode(next: VNode, prev?: VNode): VNode {
   }
   if (typeof next.tag === "function") {
     const cmp = next.tag as MemoView;
+    const props =
+      next.memo !== undefined
+        ? next.memo
+        : next.children.length > 0
+          ? { ...next.props, children: next.children }
+          : next.props || EMPTY_OBJ;
+
     if (
       prev &&
       vnodeComponent.get(prev) === cmp &&
@@ -484,8 +528,8 @@ function resolveVNode(next: VNode, prev?: VNode): VNode {
     ) {
       return prev;
     }
-    const resolved = (cmp as any)(next.memo);
-    resolved.memo = next.memo;
+    const resolved = resolveVNode((cmp as any)(props), prev);
+    resolved.memo = next.memo !== undefined ? next.memo : props;
     vnodeComponent.set(resolved, cmp);
     return resolved;
   }
@@ -655,7 +699,7 @@ function patch(
 
 // ── Subscriptions ──────────────────────────────────────────────
 
-type ActiveSub<Msg> = [SubFn<Msg, any>, Record<string, any>, () => void];
+type ActiveSub<Msg> = [SubFn<Msg, unknown>, Record<string, unknown>, () => void];
 
 // OPT: iterate a then b separately — no { ...a, ...b } temp object
 function subPropsChanged(
@@ -678,7 +722,7 @@ function subPropsChanged(
 
 function patchSubs<Msg>(
   old: (ActiveSub<Msg> | undefined)[],
-  next: Sub<Msg>[],
+  next: Subs<Msg>,
   dispatch: Dispatch<Msg>,
 ): (ActiveSub<Msg> | undefined)[] {
   const out: (ActiveSub<Msg> | undefined)[] = [];
@@ -689,10 +733,11 @@ function patchSubs<Msg>(
     const ns = next[i];
 
     if (ns) {
-      const [fn, props] = ns as [SubFn<Msg, any>, any];
-      if (!os || fn !== os[0] || subPropsChanged(os[1] ?? EMPTY_OBJ, props ?? EMPTY_OBJ)) {
+      const [fn, props] = ns as readonly [SubFn<Msg, unknown>, unknown];
+      const propsObj = (props ?? EMPTY_OBJ) as Record<string, unknown>;
+      if (!os || fn !== os[0] || subPropsChanged(os[1] ?? EMPTY_OBJ, propsObj)) {
         if (os) os[2]();
-        out.push([fn, props, fn(dispatch, props)]);
+        out.push([fn, propsObj, fn(dispatch, props)]);
       } else {
         out.push(os);
       }
@@ -724,20 +769,10 @@ export function app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg> {
   const dbg: DebugConfig =
     rawDebug === true ? { console: true, history: true, maxHistory: 200 } : rawDebug ? rawDebug : {};
 
-  let state: Readonly<S>;
-  let initCmd: Cmd<Msg>;
-
-  // Handle Init result: S | readonly [S, Cmd<Msg>]
-  // If rawInit is just S, then initCmd is none.
-  // If rawInit is [S, Cmd<Msg>], then initCmd is rawInit[1].
-  if (Array.isArray(rawInit)) {
-    state = rawInit[0] as S;
-    initCmd = rawInit[1] as Cmd<Msg>;
-  } else {
-    state = rawInit as S;
-    initCmd = none;
-  }
-  if (dbg.history || dbg.console) state = deepFreeze(state);
+  // Init is always a tuple [state, cmd] — see Init<S, Msg>.
+  const [initialState, initCmd] = rawInit;
+  const shouldFreeze = config.freezeState !== false;
+  let state: Readonly<S> = shouldFreeze ? deepFreeze(initialState) : (initialState as Readonly<S>);
 
   let vdom: VNode | undefined =
     rootNode.childNodes.length > 0 && rootNode.firstChild
@@ -764,7 +799,7 @@ export function app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg> {
     if (destroyed) return;
 
     const prevState = lastRenderedState;
-    const next = view(state, dispatch);
+    const next = resolveVNode(view(state, dispatch), vdom);
 
     if (!vdom) {
       rootNode.textContent = "";
@@ -801,26 +836,13 @@ export function app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg> {
     let qIdx = 0;
     while (qIdx < msgQueue.length) {
       const currentMsg = msgQueue[qIdx++]!;
-      const result = update(state, currentMsg);
-      let nextState: S;
-      let effects: Effect<Msg>[];
-
-      if (Array.isArray(result)) {
-        nextState = result[0] as S;
-        effects = ((result[1] as Cmd<Msg>) ?? []) as Effect<Msg>[];
-      } else {
-        nextState = result as S;
-        effects = [];
-      }
-
-      if (nextState == null) {
-        destroy();
-        break;
-      }
+      const [resultState, resultCmd] = update(state, currentMsg);
+      let nextState: S = resultState as S;
+      const effects: readonly Effect<Msg>[] = resultCmd;
 
       if (dbg.console) {
         console.groupCollapsed(
-          "%c[SuperApp]%c %s",
+          "%c[Teelm]%c %s",
           "color:#7c3aed;font-weight:bold",
           "color:inherit",
           String((currentMsg as any)?.tag ?? (currentMsg as any)?.type ?? currentMsg),
@@ -831,7 +853,7 @@ export function app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg> {
         console.groupEnd();
       }
 
-      if (dbg.history || dbg.console) nextState = deepFreeze(nextState) as S;
+      if (shouldFreeze) nextState = deepFreeze(nextState) as S;
 
       if (nextState !== (state as unknown)) {
         state = nextState as Readonly<S>;
@@ -884,9 +906,10 @@ export function app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg> {
   };
 
   render();
-  if (subscriptions) subs = patchSubs([], subscriptions(state), dispatch); // This is fine
-  for (let i = 0; i < initCmd.length; i++) { // Iterate over initCmd
-    const effect = initCmd[i]!; // Renamed from fx to effect for clarity
+  if (subscriptions) subs = patchSubs([], subscriptions(state), dispatch);
+  
+  for (let i = 0; i < initCmd.length; i++) {
+    const effect = initCmd[i]!;
     effect[0](dispatch, effect[1]);
   }
 

@@ -23,7 +23,7 @@ function setup(pages: Record<string, string>, options?: { ignore?: string }) {
     'export interface Shared {}\nexport const initialShared = {};\n',
   );
   if (options?.ignore) {
-    fs.writeFileSync(path.join(TMP, ".superappignore"), options.ignore);
+    fs.writeFileSync(path.join(TMP, ".teelmignore"), options.ignore);
   }
 }
 
@@ -46,8 +46,8 @@ async function runGen(): Promise<string> {
   }
 }
 
-const STUB_PAGE = `import { h } from "superapp";
-import { type PageConfig } from "superapp/router";
+const STUB_PAGE = `import { h } from "teelm";
+import { type PageConfig } from "teelm/router";
 export const page: PageConfig<{}, never, any, {}> = {
   init: () => ({}),
   update: (m) => m,
@@ -55,8 +55,8 @@ export const page: PageConfig<{}, never, any, {}> = {
 };
 `;
 
-const STUB_PARAM_PAGE = (params: string) => `import { h } from "superapp";
-import { type PageConfig } from "superapp/router";
+const STUB_PARAM_PAGE = (params: string) => `import { h } from "teelm";
+import { type PageConfig } from "teelm/router";
 export const page: PageConfig<any, never, any, {${params}}> = {
   init: (p) => p,
   update: (m) => m,
@@ -66,7 +66,7 @@ export const page: PageConfig<any, never, any, {${params}}> = {
 
 afterEach(cleanup);
 
-describe("superapp gen", () => {
+describe("teelm gen", () => {
   it("generates router for Home + About + NotFound", async () => {
     setup({
       "Home.ts": STUB_PAGE,
@@ -240,7 +240,7 @@ describe("superapp gen", () => {
     expect(output).not.toContain('route("/users/profile.component")');
   });
 
-  it("honors .superappignore patterns", async () => {
+  it("honors .teelmignore patterns", async () => {
     setup({
       "Home.ts": STUB_PAGE,
       "admin/Index.ts": STUB_PAGE,

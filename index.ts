@@ -1,4 +1,4 @@
-import { app, h, type Dispatch, type Sub } from "./src/hyperapp";
+import { app, h, withFx, noFx, type Dispatch, type Subs, type UpdateResult, type Init } from "./src/teelm";
 import { delay } from "./src/fx";
 import { interval, onKeyDown } from "./src/subs";
 import { attachDebugger } from "./src/debugger";
@@ -25,32 +25,33 @@ type Msg =
 
 // ── Init ───────────────────────────────────────────────────────
 
-const init: State = { count: 0, message: "", time: Date.now(), lastKey: "" };
+const initState: State = { count: 0, message: "", time: Date.now(), lastKey: "" };
+const init: Init<State, Msg> = noFx(initState);
 
 // ── Update ─────────────────────────────────────────────────────
 
-function update(state: Readonly<State>, msg: Msg) {
+function update(state: Readonly<State>, msg: Msg): UpdateResult<State, Msg> {
   switch (msg.tag) {
     case "Increment":
-      return { ...state, count: state.count + 1 };
+      return noFx({ ...state, count: state.count + 1 });
     case "Decrement":
-      return { ...state, count: state.count - 1 };
+      return noFx({ ...state, count: state.count - 1 });
     case "DelayedIncrement":
-      return [state, [delay<Msg>(1000, { tag: "Increment" })]] as const;
+      return withFx<State, Msg>(state, delay(1000, { tag: "Increment" }));
     case "SetMessage":
-      return { ...state, message: msg.value };
+      return noFx({ ...state, message: msg.value });
     case "Tick":
-      return { ...state, time: msg.now };
+      return noFx({ ...state, time: msg.now });
     case "KeyPressed":
-      return { ...state, lastKey: msg.key };
+      return noFx({ ...state, lastKey: msg.key });
     case "Reset":
-      return { ...init, time: state.time };
+      return noFx({ ...initState, time: state.time });
   }
 }
 
 // ── Subscriptions ──────────────────────────────────────────────
 
-function subscriptions(_state: Readonly<State>): Sub<Msg>[] {
+function subscriptions(_state: Readonly<State>): Subs<Msg> {
   return [
     interval<Msg>(1000, (now) => ({ tag: "Tick", now })),
     onKeyDown<Msg>((key) => ({ tag: "KeyPressed", key })),
@@ -71,7 +72,7 @@ function view(state: Readonly<State>, dispatch: Dispatch<Msg>) {
         color: "#1e293b",
       },
     },
-    h("h1", { style: { color: "#7c3aed", marginBottom: "0.25rem" } }, "SuperApp"),
+    h("h1", { style: { color: "#7c3aed", marginBottom: "0.25rem" } }, "Teelm"),
     h(
       "p",
       { style: { color: "#64748b", marginTop: 0 } },

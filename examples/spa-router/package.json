@@ -1,5 +1,5 @@
 {
-  "name": "@superapp/example-spa-router",
+  "name": "@teelm/example-spa-router",
   "private": true,
   "type": "module",
   "scripts": {

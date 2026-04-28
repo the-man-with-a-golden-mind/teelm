@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { h, text, memo, lazy, resolveClass, type VNode } from "../src/hyperapp";
+import { h, text, memo, lazy, resolveClass, type VNode } from "../src/teelm";
 
 describe("h()", () => {
   it("creates element VNode", () => {

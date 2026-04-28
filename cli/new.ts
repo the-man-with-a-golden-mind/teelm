@@ -44,12 +44,12 @@ function packageJson(name: string): string {
       version: "0.0.0",
       type: "module",
       scripts: {
-        dev: "superapp dev",
-        build: "superapp build",
-        gen: "superapp gen",
+        dev: "teelm dev",
+        build: "teelm build",
+        gen: "teelm gen",
       },
       dependencies: {
-        superapp: "latest",
+        teelm: "latest",
       },
       devDependencies: {
         vite: "^6",
@@ -73,7 +73,7 @@ function tsconfigJson(): string {
         moduleResolution: "bundler",
         strict: true,
         jsx: "react-jsx",
-        jsxImportSource: "superapp",
+        jsxImportSource: "teelm",
         noEmit: true,
         skipLibCheck: true,
         verbatimModuleSyntax: true,
@@ -109,8 +109,8 @@ export const initialShared: Shared = {
 // ── main.ts ──────────────────────────────────────────────────────
 
 function mainTs(): string {
-  return `import { h } from "superapp";
-import { routerApp, routerLink } from "superapp/router";
+  return `import { h } from "teelm";
+import { routerApp, routerLink } from "teelm/router";
 import { router } from "./generated/router";
 
 routerApp({
@@ -126,7 +126,7 @@ routerApp({
       ),
       h("main", { class: "flex-1 max-w-4xl mx-auto w-full px-6 py-8" }, content),
       h("footer", { class: "text-center text-sm text-gray-400 py-4" },
-        h("p", {}, "Built with SuperApp"),
+        h("p", {}, "Built with Teelm"),
       ),
     ),
   node: document.getElementById("app")!,
@@ -135,7 +135,7 @@ routerApp({
 }
 
 function mainTsx(): string {
-  return `import { routerApp, routerLink } from "superapp/router";
+  return `import { routerApp, routerLink } from "teelm/router";
 import { router } from "./generated/router";
 
 routerApp({
@@ -151,7 +151,7 @@ routerApp({
       </nav>
       <main class="flex-1 max-w-4xl mx-auto w-full px-6 py-8">{content}</main>
       <footer class="text-center text-sm text-gray-400 py-4">
-        <p>Built with SuperApp</p>
+        <p>Built with Teelm</p>
       </footer>
     </div>
   ),
@@ -163,17 +163,17 @@ routerApp({
 // ── Page templates ───────────────────────────────────────────────
 
 function homePageTs(): string {
-  return `import { h } from "superapp";
-import { routerLink, type PageConfig } from "superapp/router";
+  return `import { h, noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => ({}),
-  update: (model) => model,
+  init: () => noFx({}),
+  update: (model) => noFx(model),
   view: (_model, shared) =>
     h("div", { class: "text-center py-16" },
       h("h1", { class: "text-4xl font-bold mb-4" }, \`Welcome to \${shared.appName}\`),
-      h("p", { class: "text-gray-500 mb-8" }, "Built with SuperApp — Elm-inspired TypeScript framework"),
+      h("p", { class: "text-gray-500 mb-8" }, "Built with Teelm — Elm-inspired TypeScript framework"),
       h("a", {
         ...routerLink("/about"),
         class: "inline-block px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 no-underline",
@@ -184,16 +184,17 @@ export const page: PageConfig<{}, never, Shared, {}> = {
 }
 
 function homePageTsx(): string {
-  return `import { routerLink, type PageConfig } from "superapp/router";
+  return `import { noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => ({}),
-  update: (model) => model,
+  init: () => noFx({}),
+  update: (model) => noFx(model),
   view: (_model, shared) => (
     <div class="text-center py-16">
       <h1 class="text-4xl font-bold mb-4">Welcome to {shared.appName}</h1>
-      <p class="text-gray-500 mb-8">Built with SuperApp — Elm-inspired TypeScript framework</p>
+      <p class="text-gray-500 mb-8">Built with Teelm — Elm-inspired TypeScript framework</p>
       <a {...routerLink("/about")} class="inline-block px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 no-underline">
         Learn More
       </a>
@@ -204,18 +205,18 @@ export const page: PageConfig<{}, never, Shared, {}> = {
 }
 
 function aboutPageTs(): string {
-  return `import { h } from "superapp";
-import { routerLink, type PageConfig } from "superapp/router";
+  return `import { h, noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => ({}),
-  update: (model) => model,
+  init: () => noFx({}),
+  update: (model) => noFx(model),
   view: (_model, shared) =>
     h("div", {},
       h("h1", { class: "text-3xl font-bold mb-4" }, "About"),
       h("p", { class: "text-gray-600 mb-6 leading-relaxed" },
-        \`\${shared.appName} is built with SuperApp, an Elm-inspired TypeScript framework.\`,
+        \`\${shared.appName} is built with Teelm, an Elm-inspired TypeScript framework.\`,
       ),
       h("a", {
         ...routerLink("/"),
@@ -227,17 +228,18 @@ export const page: PageConfig<{}, never, Shared, {}> = {
 }
 
 function aboutPageTsx(): string {
-  return `import { routerLink, type PageConfig } from "superapp/router";
+  return `import { noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => ({}),
-  update: (model) => model,
+  init: () => noFx({}),
+  update: (model) => noFx(model),
   view: (_model, shared) => (
     <div>
       <h1 class="text-3xl font-bold mb-4">About</h1>
       <p class="text-gray-600 mb-6 leading-relaxed">
-        {shared.appName} is built with SuperApp, an Elm-inspired TypeScript framework.
+        {shared.appName} is built with Teelm, an Elm-inspired TypeScript framework.
       </p>
       <a {...routerLink("/")} class="inline-block px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 no-underline text-gray-700">
         Back Home
@@ -249,13 +251,13 @@ export const page: PageConfig<{}, never, Shared, {}> = {
 }
 
 function notFoundPageTs(): string {
-  return `import { h } from "superapp";
-import { routerLink, type PageConfig } from "superapp/router";
+  return `import { h, noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{ path: string }, never, Shared, { path: string }> = {
-  init: (params) => ({ path: params.path }),
-  update: (model) => model,
+  init: (params) => noFx({ path: params.path }),
+  update: (model) => noFx(model),
   view: (model) =>
     h("div", { class: "text-center py-16" },
       h("div", { class: "text-6xl font-bold text-gray-200 mb-4" }, "404"),
@@ -271,12 +273,13 @@ export const page: PageConfig<{ path: string }, never, Shared, { path: string }>
 }
 
 function notFoundPageTsx(): string {
-  return `import { routerLink, type PageConfig } from "superapp/router";
+  return `import { noFx } from "teelm";
+import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
 export const page: PageConfig<{ path: string }, never, Shared, { path: string }> = {
-  init: (params) => ({ path: params.path }),
-  update: (model) => model,
+  init: (params) => noFx({ path: params.path }),
+  update: (model) => noFx(model),
   view: (model) => (
     <div class="text-center py-16">
       <div class="text-6xl font-bold text-gray-200 mb-4">404</div>
@@ -298,7 +301,7 @@ export async function run(args: string[]) {
   const name = args.find((a) => !a.startsWith("-"));
 
   if (!name) {
-    console.error("Usage: superapp new <name> [--jsx]");
+    console.error("Usage: teelm new <name> [--jsx]");
     process.exit(1);
   }
 
@@ -331,5 +334,5 @@ export async function run(args: string[]) {
   console.log(`\n${green("Done!")} Your project is ready.\n`);
   console.log(`  cd ${name}`);
   console.log(`  bun install`);
-  console.log(`  superapp dev\n`);
+  console.log(`  teelm dev\n`);
 }

@@ -1,6 +1,6 @@
-# The Elm Architecture in SuperApp
+# The Elm Architecture in Teelm
 
-SuperApp implements The Elm Architecture (TEA), a pattern for building web applications using unidirectional data flow. Every SuperApp application is driven by three things: **State**, **Update**, and **View**.
+Teelm implements The Elm Architecture (TEA), a pattern for building web applications using unidirectional data flow. Every Teelm application is driven by three things: **State**, **Update**, and **View**.
 
 ## The Cycle
 
@@ -46,25 +46,33 @@ interface State {
   loading: boolean;
   items: Item[];
 }
-
-const init: State = { count: 0, loading: false, items: [] };
 ```
 
-When debug mode is enabled, state is deeply frozen after every update to catch accidental mutations.
+State is **deep-frozen on every transition** by default — accidental mutations throw immediately, not only in debug mode. Opt out with `freezeState: false` on `app()` for known hot paths.
 
 ### Init
 
-The initial state can be a plain value or a `[State, Cmd<Msg>]` tuple to run effects at startup:
+`init` is always a `[State, Cmd<Msg>]` tuple. Use `noFx(state)` when there are no startup effects.
 
 ```ts
-// Plain state
-const init: State = { count: 0 };
+import { noFx, withFx, type Init } from "teelm";
+import { storageGet } from "teelm/fx";
+import { Decode } from "teelm/functional";
 
-// State with initial effects (e.g., load from localStorage)
-const init: [State, Cmd<Msg>] = [
+// No startup effects
+const init: Init<State, Msg> = noFx({ count: 0, items: [] });
+
+// With startup effects (e.g., load from localStorage)
+const init: Init<State, Msg> = withFx(
   { count: 0, items: [] },
-  [storageGet("items", (raw) => ({ tag: "LoadedItems", raw }))],
-];
+  storageGet({
+    key: "items",
+    decoder: Decode.array(Decode.object({ id: Decode.number, name: Decode.string })),
+    toMsg: (r) => r.tag === "Ok"
+      ? { tag: "LoadedItems", items: r.value ?? [] }
+      : { tag: "LoadFailed", error: String(r.error) },
+  }),
+);
 ```
 
 ## Messages (Msg)
@@ -77,101 +85,126 @@ type Msg =
   | { tag: "Dec" }
   | { tag: "SetInput"; value: string }
   | { tag: "GotData"; data: Item[] }
-  | { tag: "FetchFailed"; error: string };
+  | { tag: "FetchFailed"; error: HttpError };
 ```
 
 Using discriminated unions with a `tag` field gives you exhaustive pattern matching in `switch` statements and full type safety.
 
 ## Update
 
-The update function is a pure function: `(State, Msg) -> State | [State, Cmd<Msg>]`.
+The update function is a pure function: `(State, Msg) -> [State, Cmd<Msg>]`. It always returns a tuple.
 
-- Return just the new state when no side effects are needed.
-- Return `[state, effects]` when side effects should run after the update.
+- Use `noFx(state)` when there are no side effects.
+- Use `withFx(state, ...effects)` when one or more effects should run after the update.
 
 ```ts
-function update(state: State, msg: Msg): State | [State, Cmd<Msg>] {
+import { noFx, withFx, type Update } from "teelm";
+import { http } from "teelm/fx";
+import { Decode } from "teelm/functional";
+
+const itemsDecoder = Decode.array(Decode.object({
+  id: Decode.number,
+  title: Decode.string,
+}));
+
+const update: Update<State, Msg> = (state, msg) => {
   switch (msg.tag) {
     case "Inc":
-      return { ...state, count: state.count + 1 };
+      return noFx({ ...state, count: state.count + 1 });
 
     case "FetchItems":
       return withFx(
         { ...state, loading: true },
         http({
           url: "/api/items",
-          onOk: (data) => ({ tag: "GotData", data }),
-          onError: (err) => ({ tag: "FetchFailed", error: err }),
+          decoder: itemsDecoder,
+          toMsg: (r) => r.tag === "Ok"
+            ? { tag: "GotData", data: r.value }
+            : { tag: "FetchFailed", error: r.error },
         }),
       );
 
     case "GotData":
-      return { ...state, loading: false, items: msg.data };
+      return noFx({ ...state, loading: false, items: msg.data });
+
+    case "FetchFailed":
+      return noFx({ ...state, loading: false, error: msg.error });
   }
-}
+};
 ```
 
 ### Helpers
 
 | Helper | Signature | Description |
 |--------|-----------|-------------|
-| `noFx(state)` | `S -> [S, []]` | Return state with no effects |
-| `withFx(state, ...effects)` | `(S, ...Effect<Msg>[]) -> [S, Effect<Msg>[]]` | Return state with effects |
-| `batch(commands)` | `Cmd<Msg>[] -> Cmd<Msg>` | Merge multiple command arrays |
-| `none` | `[]` | Empty command constant |
+| `noFx(state)` | `S -> [S, Cmd<never>]` | Wrap state with no effects |
+| `withFx(state, ...effects)` | `(S, ...Effect<Msg>[]) -> [S, Cmd<Msg>]` | Wrap state with one or more effects |
+| `batch(commands)` | `Cmd<Msg>[] -> Cmd<Msg>` | Merge multiple commands into one |
+| `none` | `Cmd<never>` | Empty command |
+| `mapCmd(cmd, fn)` | `(Cmd<A>, A=>B) -> Cmd<B>` | Lift a child Cmd into a parent's Msg space |
+
+`Cmd<Msg>` is a *branded* type. The only way to construct a value of type `Cmd<Msg>` is through `none`, `withFx`, `batch`, `mapCmd`, or `mapEffect` — a raw `[fn, props]` array does not satisfy the type. The same applies to `Sub<Msg>` (constructed via the helpers in `teelm/subs`). This makes pure-data effects/subs an invariant the compiler enforces.
 
 ## Effects
 
 Effects are `[EffectFn, props]` tuples. They are **data**, not imperative calls. The runtime executes them after the state update completes.
 
 ```ts
-type Effect<Msg> = readonly [EffectFn<Msg, any>, any];
-type EffectFn<Msg, P> = (dispatch: Dispatch<Msg>, props: P) => void;
+type Effect<Msg, P = any> = readonly [EffectFn<Msg, P>, P];
+type EffectFn<Msg, P>     = (dispatch: Dispatch<Msg>, props: P) => void;
 ```
 
-Built-in effects: `http`, `delay`, `navigate`, `storageSet`, `storageGet`, `log`, `dispatchMsg`.
+Built-in effects: `http`, `delay`, `navigate`, `storageSet`, `storageGet`, `log`, `dispatchMsg`. See [Effects and Subscriptions](./effects-and-subs.md) for full details.
 
-Effects dispatch messages back into the update cycle when their async work completes. This keeps the update function pure -- it never performs I/O directly.
+Effects dispatch messages back into the update cycle when their async work completes. This keeps the update function pure — it never performs I/O directly.
 
 ### Creating Custom Effects
 
 ```ts
+import type { Dispatch, Effect } from "teelm";
+import { Result } from "teelm/functional";
+
 function geolocationFx<Msg>(
   dispatch: Dispatch<Msg>,
-  props: { onSuccess: (lat: number, lng: number) => Msg; onError: (err: string) => Msg },
+  props: { toMsg: (r: Result<{ lat: number; lng: number }, string>) => Msg },
 ): void {
   navigator.geolocation.getCurrentPosition(
-    (pos) => dispatch(props.onSuccess(pos.coords.latitude, pos.coords.longitude)),
-    (err) => dispatch(props.onError(err.message)),
+    (pos) => dispatch(props.toMsg(Result.ok({ lat: pos.coords.latitude, lng: pos.coords.longitude }))),
+    (err) => dispatch(props.toMsg(Result.err(err.message))),
   );
 }
 
 export function getLocation<Msg>(
-  onSuccess: (lat: number, lng: number) => Msg,
-  onError: (err: string) => Msg,
-): Effect<Msg> {
-  return [geolocationFx, { onSuccess, onError }];
+  toMsg: (r: Result<{ lat: number; lng: number }, string>) => Msg,
+): Effect<Msg, { toMsg: (r: Result<{ lat: number; lng: number }, string>) => Msg }> {
+  return [geolocationFx, { toMsg }];
 }
 ```
+
+`Effect<Msg, P>` is **not** branded — you can construct one directly. Only `Cmd<Msg>` (a list of effects) is branded.
 
 ## Subscriptions
 
 Subscriptions are declarative event sources. You declare which events you want based on the current state, and the runtime manages subscribing/unsubscribing automatically.
 
 ```ts
-type Sub<Msg> = readonly [SubFn<Msg, any>, any] | false | null | undefined;
-type SubFn<Msg, P> = (dispatch: Dispatch<Msg>, props: P) => () => void;
+type Sub<Msg, P = any>   = readonly [SubFn<Msg, P>, P] & { /* branded */ };
+type Subs<Msg>           = readonly (Sub<Msg> | false | null | undefined)[];
+type SubFn<Msg, P>       = (dispatch: Dispatch<Msg>, props: P) => () => void;
 ```
 
-The `subscriptions` function returns an array. Falsy values are ignored (allowing conditional subscriptions).
+The `subscriptions` function returns a `Subs<Msg>`. Falsy values (`false | null | undefined`) are filtered by the runtime — perfect for conditional subscriptions.
 
 ```ts
-function subscriptions(state: State): Sub<Msg>[] {
+import { onKeyDown, interval, websocket } from "teelm/subs";
+import type { Subs } from "teelm";
+
+function subscriptions(state: State): Subs<Msg> {
   return [
     // Always active
     onKeyDown((key) => ({ tag: "KeyPressed", key })),
 
-    // Conditional -- only active when state.auto is true
+    // Conditional — only active when state.auto is true
     state.auto && interval(1000, { tag: "Tick" }),
 
     // Conditional WebSocket
@@ -185,32 +218,13 @@ function subscriptions(state: State): Sub<Msg>[] {
 
 When the state changes, the runtime diffs the old subscription list against the new one. If a subscription's runner function or non-function props changed, the old one is torn down and a new one starts. If nothing changed, the existing subscription is kept alive.
 
-### Creating Custom Subscriptions
-
-```ts
-function visibilitySub<Msg>(
-  dispatch: Dispatch<Msg>,
-  props: { msg: (visible: boolean) => Msg },
-): () => void {
-  const handler = () => dispatch(props.msg(!document.hidden));
-  document.addEventListener("visibilitychange", handler);
-  return () => document.removeEventListener("visibilitychange", handler);
-}
-
-export function onVisibilityChange<Msg>(
-  msg: (visible: boolean) => Msg,
-): Sub<Msg> {
-  return [visibilitySub, { msg }];
-}
-```
-
 ## View
 
-The view is a pure function: `(State, Dispatch<Msg>) -> VNode`.
-
-It produces a virtual DOM tree. The runtime diffs it against the previous tree and patches the real DOM.
+The view is a pure function: `(State, Dispatch<Msg>) -> VNode`. It produces a virtual DOM tree. The runtime diffs it against the previous tree and patches the real DOM.
 
 ```ts
+import { h, type Dispatch } from "teelm";
+
 function view(state: State, dispatch: Dispatch<Msg>): VNode {
   return h("div", {},
     h("h1", {}, String(state.count)),
@@ -219,9 +233,23 @@ function view(state: State, dispatch: Dispatch<Msg>): VNode {
 }
 ```
 
+For more ergonomic event wiring, the typed event helpers in `teelm/events` build handler props for you:
+
+```ts
+import { makeEvents } from "teelm/events";
+
+function view(state: State, dispatch: Dispatch<Msg>) {
+  const E = makeEvents(dispatch);
+  return h("div", {},
+    h("h1", {}, String(state.count)),
+    h("button", E.onClick({ tag: "Inc" }), "+"),
+  );
+}
+```
+
 ### VDOM Reconciliation
 
-SuperApp uses a keyed VDOM reconciliation algorithm with head/tail optimization:
+Teelm uses a keyed VDOM reconciliation algorithm with head/tail optimization:
 
 1. Match children from the head of both old and new lists
 2. Match children from the tail
@@ -243,7 +271,7 @@ state.items.map((item) =>
 interface AppInstance<S, Msg> {
   dispatch: Dispatch<Msg>;       // Send messages programmatically
   getState: () => Readonly<S>;   // Read current state
-  destroy: () => void;           // Tear down the app
+  destroy: () => void;           // Tear down the app (call this to unmount)
   getHistory: () => readonly Readonly<S>[];  // State history (debug mode)
   getHistoryIndex: () => number;
   goBack: () => void;            // Time-travel back
@@ -251,6 +279,8 @@ interface AppInstance<S, Msg> {
   jumpTo: (index: number) => void;
 }
 ```
+
+To stop the app, call `instance.destroy()`. There is no "return null from update to destroy" magic.
 
 ## Debug Mode
 
@@ -267,10 +297,12 @@ app({
 - `history: true` -- Record state history for time-travel
 - `maxHistory` -- Maximum number of states to keep (default: 200)
 
+State is **always** deep-frozen, regardless of debug mode — the only way to disable freezing is to pass `freezeState: false` on `AppConfig`.
+
 Combine with `attachDebugger` for a visual overlay:
 
 ```ts
-import { attachDebugger } from "superapp/debugger";
+import { attachDebugger } from "teelm/debugger";
 const instance = app({ /* ... */ debug: true });
 attachDebugger(instance, { position: "bottom-right" });
 ```
@@ -282,8 +314,38 @@ For larger applications, split logic into child modules that each export their o
 | Function | Purpose |
 |----------|---------|
 | `mapDispatch(dispatch, fn)` | Wrap child dispatch to produce parent messages |
-| `mapEffect(effect, fn)` | Wrap child effects to produce parent messages |
-| `mapSub(sub, fn)` | Wrap child subscriptions to produce parent messages |
-| `batchSubs(...subs)` | Merge subscription arrays from multiple children |
+| `mapEffect(effect, fn)` | Lift one effect into a parent's Msg space |
+| `mapCmd(cmd, fn)` | Lift every effect in a Cmd into a parent's Msg space |
+| `mapSub(sub, fn)` | Lift a subscription into a parent's Msg space |
+| `batchSubs(...subs)` | Flatten subscription lists from multiple sources |
+
+```ts
+import { mapDispatch, mapCmd, mapSub, type Subs } from "teelm";
+import * as Counter from "./counter";
+
+type Msg = { tag: "Child"; msg: Counter.Msg };
+
+// In view:
+Counter.view(
+  state.child,
+  mapDispatch(dispatch, (m: Counter.Msg): Msg => ({ tag: "Child", msg: m })),
+);
+
+// In update — lift the child's Cmd into the parent's Msg space:
+case "Child": {
+  const [childState, childCmd] = Counter.update(state.child, msg.msg);
+  return [
+    { ...state, child: childState },
+    mapCmd(childCmd, (m): Msg => ({ tag: "Child", msg: m })),
+  ];
+}
+
+// In subscriptions:
+function subscriptions(state: State): Subs<Msg> {
+  return Counter.subscriptions(state.child).map((s) =>
+    mapSub(s, (m: Counter.Msg): Msg => ({ tag: "Child", msg: m })),
+  );
+}
+```
 
 See `examples/nested-tea/` for a complete working example.

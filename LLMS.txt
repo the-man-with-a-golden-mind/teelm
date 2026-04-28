@@ -1,43 +1,95 @@
 SUPERAPP FRAMEWORK — LLM REFERENCE
 ====================================
 
-SuperApp is a TypeScript web framework implementing The Elm Architecture (TEA).
+Teelm is a TypeScript web framework implementing The Elm Architecture (TEA).
 Zero runtime dependencies. Uses Bun as runtime and Vite as bundler.
 
-Package: "superapp" version 0.1.0
-Exports: "superapp", "superapp/fx", "superapp/subs", "superapp/router", "superapp/debugger", "superapp/jsx-runtime"
+Package: "teelm"
+Subpath exports:
+  "teelm"              — core (app, h, noFx, withFx, mapCmd, types)
+  "teelm/fx"           — effects (http, delay, navigate, storageGet/Set, log, dispatchMsg)
+  "teelm/subs"         — subscriptions (interval, onKeyDown, websocket, ...)
+  "teelm/router"       — typed routing + Page protocol
+  "teelm/functional"   — Result, Maybe, Decoder, HttpError, branded Url/Path/RouteName
+  "teelm/task"         — Task<E, T> for composable async
+  "teelm/events"       — typed event helpers (makeEvents)
+  "teelm/testing"      — test helpers
+  "teelm/debugger"     — time-travel overlay
+  "teelm/jsx-runtime"  — JSX automatic transform
+
+TypeScript: strict, exactOptionalPropertyTypes: true.
 
 ================================================================================
-CORE TYPES (superapp)
+CORE INVARIANTS — read first
+================================================================================
+
+1. init and update are TUPLE-ONLY: readonly [State, Cmd<Msg>].
+   Use noFx(state) when there are no effects. There is NO bare-state shorthand.
+
+2. Cmd<Msg> and Sub<Msg> are BRANDED types. The only way to construct them is
+   via the public helpers (none, withFx, batch, mapCmd, mapEffect, and the
+   sub creators in teelm/subs). A raw [fn, props] tuple does NOT satisfy
+   Cmd<Msg> or Sub<Msg> at the type level.
+
+3. subscriptions(state) returns Subs<Msg> = readonly (Sub<Msg> | false | null | undefined)[].
+   Falsy entries are dropped at runtime — perfect for `cond && interval(...)`.
+
+4. State is DEEP-FROZEN on every transition by default. Opt out with
+   `freezeState: false` in AppConfig only for known hot paths.
+
+5. To tear down an app, call `instance.destroy()`. There is no "return null
+   from update to destroy" magic.
+
+6. http() and storageGet() are decoder-based. They surface a Result<T, HttpError>
+   (resp. Result<T | undefined, StorageError | string>) to your update function.
+   Use Decode.* from teelm/functional to build decoders.
+
+================================================================================
+CORE TYPES (teelm)
 ================================================================================
 
 VNode — Virtual DOM node
-  { tag: string | MemoView, props: Record<string, any>, key: string | number | undefined, children: VNode[], type: number, memo: unknown, node: Node | undefined }
+  { tag: string | MemoView, props: Record<string, any>, key: string | number | undefined,
+    children: VNode[], type: number, memo: unknown, node: Node | undefined }
 
 MemoView<P> = (props: P) => VNode
 Dispatch<Msg> = (msg: Msg | readonly Msg[]) => void
-EffectFn<Msg, P> = (dispatch: Dispatch<Msg>, props: P) => void
-Effect<Msg> = readonly [EffectFn<Msg, any>, any]
-Cmd<Msg> = readonly Effect<Msg>[]
-SubFn<Msg, P> = (dispatch: Dispatch<Msg>, props: P) => () => void
-Sub<Msg> = readonly [SubFn<Msg, any>, any] | false | null | undefined
-UpdateResult<S, Msg> = S | readonly [S, Cmd<Msg>]
-Update<S, Msg> = (state: Readonly<S>, msg: Msg) => UpdateResult<S, Msg>
-Init<S, Msg> = S | readonly [S, Cmd<Msg>]
+
+EffectFn<Msg, P = any> = (dispatch: Dispatch<Msg>, props: P) => void
+Effect<Msg, P = any>   = readonly [EffectFn<Msg, P>, P]
+
+// Branded — only constructable via none / withFx / batch / mapCmd / mapEffect.
+Cmd<Msg> = readonly Effect<Msg>[] & { readonly [__cmdBrand]: Msg }
+
+SubFn<Msg, P = any> = (dispatch: Dispatch<Msg>, props: P) => () => void
+// Branded — only constructable via the sub creators in teelm/subs.
+Sub<Msg, P = any>   = readonly [SubFn<Msg, P>, P] & { readonly [__subBrand]: Msg }
+
+// Subscription list, allows falsy entries.
+Subs<Msg> = readonly (Sub<Msg> | false | null | undefined)[]
+
+// init / update are tuple-only.
+UpdateResult<S, Msg> = readonly [S, Cmd<Msg>]
+Update<S, Msg>       = (state: Readonly<S>, msg: Msg) => UpdateResult<S, Msg>
+Init<S, Msg>         = readonly [S, Cmd<Msg>]
 
 AppConfig<S, Msg>:
   init: Init<S, Msg>
   update: Update<S, Msg>
   view: (state: Readonly<S>, dispatch: Dispatch<Msg>) => VNode
-  subscriptions?: (state: Readonly<S>) => Sub<Msg>[]
+  subscriptions?: (state: Readonly<S>) => Subs<Msg>
   node: HTMLElement
+  onMount?: (hook: { state, dispatch, node }) => void
+  afterRender?: (hook: { state, prevState, dispatch, node }) => void
+  onUnmount?: (hook: { state, node }) => void
   debug?: boolean | DebugConfig
   middleware?: (dispatch: Dispatch<Msg>) => Dispatch<Msg>
+  freezeState?: boolean   // default true — deep-freeze state on every transition
 
 DebugConfig:
   console?: boolean
   history?: boolean
-  maxHistory?: number
+  maxHistory?: number     // default 200
 
 AppInstance<S, Msg>:
   dispatch: Dispatch<Msg>
@@ -50,12 +102,12 @@ AppInstance<S, Msg>:
   jumpTo: (index: number) => void
 
 ================================================================================
-CORE FUNCTIONS (superapp)
+CORE FUNCTIONS (teelm)
 ================================================================================
 
-h(tag: string, props?: Record<string, any> | null, ...rawChildren: any[]): VNode
-  Create a virtual DOM element. Props support: class (string | array | object),
-  className, style (string | object), onXxx event handlers, ref, key.
+h(tag: string, props?: Record<string, any> | null, ...children: any[]): VNode
+  Create a VNode. Props support: class (string | array | object), className, style
+  (string | object), onXxx event handlers, ref, key.
 
 text(value: string | number | boolean): VNode
   Create a text VNode.
@@ -64,227 +116,488 @@ memo<P>(component: MemoView<P>, props: P): VNode
   Memoized component. Skips re-render if props are shallowly equal.
 
 lazy<T>(view: (data: T) => VNode, data: T): VNode
-  Lazy evaluation. Same as memo but takes a view function and data.
+  Lazy evaluation; same shape as memo.
 
 app<S, Msg>(config: AppConfig<S, Msg>): AppInstance<S, Msg>
-  Mount an application. Starts the TEA cycle.
+  Mount an application. Starts the TEA cycle. State is deep-frozen on every
+  transition unless freezeState: false.
 
-noFx<S>(state: S): readonly [S, Cmd<any>]
-  Return state with no effects. Equivalent to [state, []].
+noFx<S>(state: S): readonly [S, Cmd<never>]
+  Wrap state with no effects. The Cmd<never> result satisfies any Cmd<Msg>.
 
-withFx<S, Msg>(state: S, ...effects: Effect<Msg>[]): readonly [S, Cmd<Msg>]
-  Return state with effects. Equivalent to [state, effects].
+withFx<S, Msg>(state: S, ...effects: readonly Effect<Msg>[]): readonly [S, Cmd<Msg>]
+  Wrap state with one or more effects.
 
 batch<Msg>(commands: readonly Cmd<Msg>[]): Cmd<Msg>
-  Merge multiple command arrays into one.
+  Merge multiple Cmds into one.
 
-none: Cmd<any>
-  Empty command array constant [].
+none: Cmd<never>
+  Empty Cmd, polymorphic in Msg.
 
-mapEffect<A, B>(effect: Effect<A>, fn: (a: A) => B): Effect<B>
-  Transform an effect's message type from A to B.
+mapEffect<A, B, P>(effect: Effect<A, P>, fn: (a: A) => B): Effect<B, P>
+  Lift one effect into a parent Msg space.
 
-mapSub<A, B>(sub: Sub<A>, fn: (a: A) => B): Sub<B>
-  Transform a subscription's message type from A to B. Passes through falsy subs.
+mapCmd<A, B>(cmd: Cmd<A>, fn: (a: A) => B): Cmd<B>
+  Lift every effect inside a Cmd into a parent Msg space. Use this in nested
+  TEA when you receive a child's Cmd from the child's update.
+
+mapSub<A, B, P>(sub: Sub<A, P> | false | null | undefined, fn): Sub<B, P> | false | null | undefined
+  Lift a subscription's Msg type. Passes falsy values through.
 
 mapDispatch<A, B>(dispatch: Dispatch<B>, fn: (a: A) => B): Dispatch<A>
-  Create a child dispatch that maps messages from A to B.
+  Wrap a dispatch so a child can call it with its own Msg type.
 
-batchSubs<Msg>(...args: (Sub<Msg> | Sub<Msg>[])[]): Sub<Msg>[]
-  Merge subscriptions from multiple sources. Filters out falsy values.
+batchSubs<Msg>(...args: (Subs<Msg> | Sub<Msg> | false | null | undefined)[]): Subs<Msg>
+  Flatten subscription lists from multiple sources into one Subs<Msg>.
 
 resolveClass(value: unknown): string
-  Resolve class values. Accepts string, array (falsy filtered), or object (truthy keys).
+  Resolve class values: string, array (falsy filtered), object (truthy keys joined).
 
 ================================================================================
-EFFECTS (superapp/fx)
+EFFECTS (teelm/fx)
 ================================================================================
 
-http<Msg>(props: { url: string, options?: RequestInit, expect?: "json" | "text", onOk: (data: any) => Msg, onError: (error: string) => Msg }): Effect<Msg>
-  HTTP fetch effect. Default expect is "json". Non-2xx responses trigger onError with "HTTP {status}".
+--- HTTP ---
+
+http<T, Msg>(props: {
+  url: string;
+  options?: RequestInit;
+  expect?: "json" | "text";          // default "json"
+  decoder: Decoder<T>;                // validates the body
+  timeoutMs?: number;
+  toMsg: (result: Result<T, HttpError>) => Msg;
+}): Effect<Msg>
+
+  Fetch and decode. expect: "json" parses+validates with `decoder`. expect: "text"
+  passes the raw body string through `decoder` (so a decoder receiving `unknown`
+  is still required — typically Decode.string for plain text).
+  All failures (BadUrl, Timeout, NetworkError, BadStatus, BadBody) are surfaced
+  as Result.err with a typed HttpError.
+
+  Example:
+    http({
+      url: "/api/users",
+      decoder: Decode.array(Decode.object({ id: Decode.number, name: Decode.string })),
+      toMsg: (r) => r.tag === "Ok"
+        ? { tag: "GotUsers", users: r.value }
+        : { tag: "FetchFailed", error: r.error },
+    })
+
+--- delay ---
 
 delay<Msg>(ms: number, msg: Msg): Effect<Msg>
   Dispatch msg after ms milliseconds.
 
+--- navigate ---
+
 navigate<Msg>(url: string, replace?: boolean): Effect<Msg>
-  Push or replace browser history. Dispatches popstate event.
+  Push (or replace) browser history. Dispatches a popstate event so the router
+  picks up the change.
 
-storageSet<Msg>(key: string, value: string): Effect<Msg>
-  Write to localStorage. Silently catches quota errors.
+--- storageSet ---
 
-storageGet<Msg>(key: string, onResult: (value: string | null) => Msg): Effect<Msg>
-  Read from localStorage. Dispatches result message.
+storageSet<Msg>(
+  key: string,
+  value: string,
+  toMsg?: (result: Result<undefined, StorageError>) => Msg,
+): Effect<Msg>
 
-log<Msg>(...args: any[]): Effect<Msg>
-  Console.log as an effect.
+  Write to localStorage. If toMsg is provided, dispatches a Result message
+  (Ok with undefined, or Err with a typed StorageError). Without toMsg the
+  call is fire-and-forget (errors swallowed) — the explicit Result form is
+  recommended for production code.
+
+--- storageGet ---
+
+storageGet<T, Msg>(props: {
+  key: string;
+  decoder: Decoder<T>;
+  json?: boolean;                                    // default true: JSON.parse before decoding
+  toMsg: (result: Result<T | undefined, StorageError | string>) => Msg;
+}): Effect<Msg>
+
+  Read from localStorage and decode. Missing key dispatches Result.ok(undefined).
+  JSON parse failures dispatch Result.err(<string reason>). Decoder failures
+  dispatch Result.err(<decoder error string>). DOM-level errors dispatch
+  Result.err(<StorageError>).
+
+--- StorageError ---
+
+type StorageError =
+  | { tag: "QuotaExceeded"; message: string }
+  | { tag: "SecurityError"; message: string }
+  | { tag: "Unavailable";   message: string }
+  | { tag: "Unknown";       message: string }
+
+--- log / dispatchMsg / compactEffects ---
+
+log<Msg>(...args: unknown[]): Effect<Msg>
+  console.log as an effect. Useful for tracing dispatch flow.
 
 dispatchMsg<Msg>(msg: Msg): Effect<Msg>
-  Dispatch a message as an effect. Useful in batched effect lists.
+  Dispatch a message as an effect. Useful inside batched effect lists.
 
 compactEffects<Msg>(...effects: (Effect<Msg> | false | null | undefined)[]): Effect<Msg>[]
-  Filter out falsy effects. Use with spread in withFx.
+  Filter out falsy effects before passing to withFx via spread.
 
 ================================================================================
-SUBSCRIPTIONS (superapp/subs)
+SUBSCRIPTIONS (teelm/subs)
 ================================================================================
 
 interval<Msg>(ms: number, msg: Msg | ((now: number) => Msg)): Sub<Msg>
-  Recurring timer. msg can be a static value or function receiving Date.now().
-
 onKeyDown<Msg>(msg: (key: string, e: KeyboardEvent) => Msg): Sub<Msg>
-  Global keydown listener.
-
 onKeyUp<Msg>(msg: (key: string, e: KeyboardEvent) => Msg): Sub<Msg>
-  Global keyup listener.
-
 onMouseMove<Msg>(msg: (x: number, y: number) => Msg): Sub<Msg>
-  Global mousemove. Receives clientX, clientY.
-
 onResize<Msg>(msg: (w: number, h: number) => Msg): Sub<Msg>
-  Window resize. Receives innerWidth, innerHeight.
-
 onUrlChange<Msg>(msg: (url: URL) => Msg): Sub<Msg>
-  Popstate listener. Not needed if using routerApp (it handles this).
-
 onAnimationFrame<Msg>(msg: (timestamp: number) => Msg): Sub<Msg>
-  requestAnimationFrame loop. Receives DOMHighResTimeStamp.
-
 onEvent<Msg>(event: string, msg: (e: Event) => Msg, target?: EventTarget): Sub<Msg>
-  Generic DOM event listener. Default target is window.
+websocket<Msg>(props: {
+  url: string;
+  protocols?: string | string[];
+  onMessage: (data: unknown) => Msg;
+  onOpen?: () => Msg;
+  onClose?: () => Msg;
+  onError?: (e: Event) => Msg;
+}): Sub<Msg>
 
-websocket<Msg>(props: { url: string, protocols?: string | string[], onMessage: (data: any) => Msg, onOpen?: () => Msg, onClose?: () => Msg, onError?: (e: Event) => Msg }): Sub<Msg>
-  WebSocket subscription. Auto-connects when active, disconnects when removed.
+These are the ONLY way to construct a Sub<Msg>. To make a custom subscription,
+write a SubFn and brand the tuple via one of the helpers (see "Custom
+subscription" pattern below).
 
 ================================================================================
-ROUTER (superapp/router)
+FUNCTIONAL UTILITIES (teelm/functional)
 ================================================================================
 
---- URL PARSERS ---
+--- Maybe<T> ---
 
-Parser<T>: { _tag: "path", parse: (raw: string) => T | null }
-QueryParser<T>: { _tag: "query", parse: (raw: string | null) => T }
+type Maybe<T> = { tag: "Just"; value: T } | { tag: "Nothing" }
 
-str: Parser<string>           — Any string segment
-int: Parser<number>           — Integer segment
-float: Parser<number>         — Finite number segment
-oneOf<T>(values: readonly T[]): Parser<T>  — One of fixed string values
+Maybe.just(value)               : Maybe<T>
+Maybe.nothing()                 : Maybe<never>
+Maybe.map(maybe, fn)            : Maybe<U>
+Maybe.andThen(maybe, fn)        : Maybe<U>
+Maybe.withDefault(maybe, def)   : T
+Maybe.fromNullable(value)       : Maybe<T>           // null/undefined → Nothing
 
-q.str(fallback: string): QueryParser<string>
-q.int(fallback: number): QueryParser<number>
-q.float(fallback: number): QueryParser<number>
-q.bool(fallback: boolean): QueryParser<boolean>
-q.optional.str(): QueryParser<string | undefined>
-q.optional.int(): QueryParser<number | undefined>
+--- Result<T, E> ---
 
---- ROUTE DEFINITION ---
+type Result<T, E> = { tag: "Ok"; value: T } | { tag: "Err"; error: E }
+
+Result.ok(value)                : Result<T, E>
+Result.err(error)               : Result<T, E>
+Result.map(result, fn)          : Result<U, E>
+Result.mapError(result, fn)     : Result<T, F>
+Result.andThen(result, fn)      : Result<U, E>
+Result.withDefault(result, def) : T
+Result.toMaybe(result)          : Maybe<T>
+
+--- Decoder<T> ---
+
+type Decoder<T> = (raw: unknown) => Result<T, string>
+
+Decode.string                       : Decoder<string>
+Decode.number                       : Decoder<number>          // finite numbers only
+Decode.boolean                      : Decoder<boolean>
+Decode.null                         : Decoder<null>
+Decode.unknown                      : Decoder<unknown>
+Decode.array(item)                  : Decoder<T[]>
+Decode.field(key, inner)            : Decoder<T>               // pluck one field
+Decode.optional(inner)              : Decoder<T | undefined>   // null/undefined → Ok(undefined)
+Decode.oneOf(...decoders)           : Decoder<T>               // first that succeeds
+Decode.object({ k1: d1, k2: d2 })   : Decoder<{ k1: T1, k2: T2 }>
+Decode.map(inner, fn)               : Decoder<U>
+Decode.andThen(inner, fn)           : Decoder<U>
+Decode.fromJsonString(decoder)      : (text: string) => Result<T, string>
+
+Example:
+  const userDecoder = Decode.object({
+    id: Decode.number,
+    name: Decode.string,
+    email: Decode.optional(Decode.string),
+  });
+
+--- HttpError ---
+
+type HttpError =
+  | { tag: "BadUrl";       url: string }
+  | { tag: "Timeout" }
+  | { tag: "NetworkError"; message: string }
+  | { tag: "BadStatus";    status: number; statusText: string; body: string }
+  | { tag: "BadBody";      reason: string; body: string }
+
+HttpError.badUrl(url)
+HttpError.timeout()
+HttpError.networkError(message)
+HttpError.badStatus(status, statusText, body)
+HttpError.badBody(reason, body)
+HttpError.toString(err): string
+
+--- Branded Url / Path / RouteName ---
+
+type Url       = Opaque<string, "Url">
+type Path      = Opaque<string, "Path">
+type RouteName = Opaque<string, "RouteName">
+
+Url.parse(raw: string): Maybe<Url>      // throws → Nothing on invalid
+Url.fromString(raw: string): Url         // unchecked cast — only when known-valid
+Url.toString(u: Url): string
+Url.isAbsolute(raw: string): boolean
+
+Path.parse(raw: string): Maybe<Path>    // empty string → Nothing; normalizes leading "/"
+Path.fromString(raw: string): Path       // normalizes leading "/"
+Path.toString(p: Path): string
+
+RouteName.fromString(raw: string): RouteName
+RouteName.toString(n: RouteName): string
+
+--- Generic Opaque / brand ---
+
+type Opaque<T, K extends string> = T & { readonly [__brand]: K }
+brand<T, K extends string>(val: T): Opaque<T, K>
+
+--- pipe ---
+
+pipe(x, f1, f2?, f3?, f4?)
+  Left-to-right function composition. Up to 4 functions typed; more accepted at runtime.
+
+================================================================================
+TASKS (teelm/task)
+================================================================================
+
+A Task<E, T> describes lazy async work that may succeed with T or fail with E.
+Tasks compose; you don't need an intermediate Msg variant per step in a chain.
+
+type Task<E, T> = () => Promise<Result<T, E>>
+
+Task.succeed<T, E = never>(value: T): Task<E, T>
+Task.fail<E, T = never>(error: E): Task<E, T>
+Task.fromTry<E, T>(fn: () => T, onError: (e: unknown) => E): Task<E, T>
+Task.fromPromise<E, T>(create: () => Promise<T>, onError: (e: unknown) => E): Task<E, T>
+Task.fromPromiseResult<E, T>(create: () => Promise<Result<T, E>>): Task<E, T>
+
+Task.map<E, T, U>(task, fn: (t: T) => U): Task<E, U>
+Task.mapError<E, F, T>(task, fn: (e: E) => F): Task<F, T>
+Task.andThen<E, T, U>(task, fn: (t: T) => Task<E, U>): Task<E, U>
+Task.onError<E, F, T>(task, recover: (e: E) => Task<F, T>): Task<F, T>
+
+Task.sequence<E, T>(tasks: readonly Task<E, T>[]): Task<E, T[]>      // serial
+Task.all<E, T>(tasks: readonly Task<E, T>[]): Task<E, T[]>           // parallel
+
+// Convert to Cmd<Msg>:
+Task.attempt<E, T, Msg>(task: Task<E, T>, toMsg: (r: Result<T, E>) => Msg): Effect<Msg>
+Task.perform<T, Msg>(task: Task<never, T>, toMsg: (v: T) => Msg): Effect<Msg>
+
+Example — sequenced auth + fetch with one final Msg:
+  const fetchAuth = Task.fromPromise(
+    () => fetch("/api/auth").then(r => r.json() as Promise<{ token: string }>),
+    (e) => ({ tag: "AuthFailed" as const, message: String(e) }),
+  );
+  const fetchUser = (token: string) => Task.fromPromise(
+    () => fetch(`/api/me?t=${token}`).then(r => r.json() as Promise<User>),
+    (e) => ({ tag: "UserFailed" as const, message: String(e) }),
+  );
+  const loadCurrentUser = Task.andThen(fetchAuth, ({ token }) => fetchUser(token));
+
+  // In update:
+  return withFx(state, Task.attempt(loadCurrentUser, (r) => ({ tag: "GotUser", r })));
+
+================================================================================
+TYPED EVENT HELPERS (teelm/events)
+================================================================================
+
+makeEvents<Msg>(dispatch: Dispatch<Msg>): Events<Msg>
+
+  Returns an object with handlers that dispatch via the captured `dispatch`.
+  Every method returns a partial props object suitable for spreading onto a VNode.
+
+  E.onClick(msg)            -> { onClick: (e) => dispatch(msg) }
+  E.onClickWith(fn)         -> { onClick: (e) => maybeDispatch(fn(e)) }
+  E.onDoubleClick(msg)      -> { onDblclick: ... }
+  E.onInput(fn)             -> { onInput:  (e) => maybeDispatch(fn(target.value)) }
+  E.onChange(fn)            -> { onChange: (e) => maybeDispatch(fn(target.value)) }
+  E.onChecked(fn)           -> { onChange: (e) => maybeDispatch(fn(target.checked)) }
+  E.onSubmit(msg)           -> { onSubmit: (e) => { e.preventDefault(); dispatch(msg) } }
+  E.onSubmitWith(fn)        -> { onSubmit: (e) => { preventDefault; maybeDispatch(fn(new FormData(form))) } }
+  E.onKeyDown(fn) / onKeyUp(fn)  -> { onKeydown / onKeyup: ... }
+  E.onEnter(msg) / onEscape(msg) -> { onKeydown: only-on-Enter / only-on-Escape }
+  E.onFocus(msg) / onBlur(msg)   -> { onFocus / onBlur: ... }
+
+  `fn`-style handlers (onClickWith, onInput, onChange, onChecked, onSubmitWith,
+  onKeyDown, onKeyUp) may return undefined to skip dispatch.
+
+Example:
+  function view(state: State, dispatch: Dispatch<Msg>) {
+    const E = makeEvents(dispatch);
+    return h("form", E.onSubmit({ tag: "Save" }),
+      h("input", { type: "text", value: state.name, ...E.onInput((v) => ({ tag: "SetName", value: v })) }),
+      h("button", { type: "submit" }, "Save"),
+    );
+  }
+
+================================================================================
+TESTING (teelm/testing)
+================================================================================
+
+getModel<S, Msg>(result: UpdateResult<S, Msg>): S
+getEffects<S, Msg>(result: UpdateResult<S, Msg>): Cmd<Msg>
+hasEffects<S, Msg>(result: UpdateResult<S, Msg>): boolean
+runEffect<Msg, P>(effect: Effect<Msg, P>, dispatch: Dispatch<Msg>): void
+runCmd<Msg>(cmd: Cmd<Msg>, dispatch: Dispatch<Msg>): void
+createDispatchSpy<Msg>(): { dispatch, messages: Msg[], last(): Msg | undefined, clear(): void }
+
+Example:
+  const spy = createDispatchSpy<Msg>();
+  const [next, cmd] = update(state, { tag: "Save" });
+  runCmd(cmd, spy.dispatch);
+  expect(spy.last()).toEqual({ tag: "Saved" });
+
+================================================================================
+ROUTER (teelm/router)
+================================================================================
+
+--- URL parsers ---
+
+Parser<T>:      { _tag: "path";  parse: (raw: string) => T | null }
+QueryParser<T>: { _tag: "query"; parse: (raw: string | null) => T }
+
+str:    Parser<string>    — any string segment
+int:    Parser<number>    — integer segment
+float:  Parser<number>    — finite number segment
+oneOf<T extends string>(values: readonly T[]): Parser<T>
+
+q.str(fallback: string):       QueryParser<string>
+q.int(fallback: number):       QueryParser<number>
+q.float(fallback: number):     QueryParser<number>
+q.bool(fallback: boolean):     QueryParser<boolean>      // "true"/"1" → true
+q.optional.str():              QueryParser<string | undefined>
+q.optional.int():              QueryParser<number | undefined>
+
+--- Route definition ---
 
 RouteDef<Params>:
   pattern: string
-  parse(pathname: string, search?: string): Params | null
+  parse(pathname, search?): Params | null
   toUrl(params: Params): string
 
 route(path: string): RouteDef<{}>
 route<Spec>(path: string, spec: Spec): RouteDef<ExtractParams<Spec>>
 
-Route pattern syntax:
-  "/users"          — Static segment
-  "/users/:id"      — Dynamic segment (use spec to type it)
-  "/docs/*"         — Wildcard (captures rest as "*" key)
-  ":param" names must match keys in the spec object
+Pattern syntax:
+  "/users"          static segment
+  "/users/:id"      dynamic segment (key in spec)
+  "/docs/*"         wildcard, captured under "*" key
 
 Examples:
   route("/")
-  route("/users/:id", { id: str })
-  route("/posts/:id", { id: int })
+  route("/users/:id", { id: int })
   route("/search", { q: q.str(""), page: q.int(1) })
   route("/users/:id/posts", { id: int, page: q.int(1) })
 
---- PAGE PROTOCOL ---
+router.href(routeDef, params) returns a string. If you need a branded value,
+wrap with Path.fromString(...).
+
+--- Page protocol ---
 
 PageConfig<Model, Msg, Shared, Params>:
-  init(params: Params, shared: Shared): Model | [Model, Cmd<Msg>]
-  update(model: Model, msg: Msg, shared: Shared): Model | [Model, Cmd<Msg>]
-  view(model: Model, shared: Shared, dispatch: Dispatch<Msg>): VNode
-  subscriptions?(model: Model, shared: Shared): Sub<Msg>[]
-  save?(model: Model): unknown
-  load?(saved: unknown, params: Params, shared: Shared): Model | [Model, Cmd<Msg>]
+  init(params: Params, shared: Shared): readonly [Model, Cmd<Msg>]
+  update(model: Readonly<Model>, msg: Msg, shared: Readonly<Shared>): readonly [Model, Cmd<Msg>]
+  view(model: Readonly<Model>, shared: Readonly<Shared>, dispatch: Dispatch<Msg>): VNode
+  subscriptions?(model, shared): Subs<Msg>
+  save?(model: Readonly<Model>): unknown
+  load?(saved: unknown, params: Params, shared: Shared): readonly [Model, Cmd<Msg>]
+  onMount?(ctx): void
+  onUnmount?(ctx): void
+  afterUpdate?(ctx): void
+  onError?(ctx): void
+  errorView?(ctx): VNode
+
+init / update / load all return tuples — use noFx(model) when there are no effects.
 
 Type parameters:
-  Model  — Page-local state
-  Msg    — Page-local message type
-  Shared — App-wide shared state (read from router)
-  Params — URL parameters from route parser
+  Model  — page-local state
+  Msg    — page-local message type
+  Shared — app-wide shared state (read-only inside the page)
+  Params — URL parameters from the route parser
 
 Lifecycle:
-  Navigate to page → init (or load if cache exists)
-  User interaction  → update
-  Render           → view
-  Events           → subscriptions
-  Navigate away    → save (caches model)
-  Return to page   → load (restores from cache)
+  Navigate to page    → init (or load if cached)
+  User interaction    → update
+  Render              → view (or errorView on view crash)
+  Events              → subscriptions
+  Navigate away       → save (caches model if returns non-undefined)
+  Return to page      → load (restores from cache)
+  DOM mounted         → onMount(ctx)
+  DOM updated         → afterUpdate(ctx)        // including shared changes
+  DOM removed         → onUnmount(ctx)
+  Lifecycle hook throws → onError(ctx) with phase
+  view throws          → onError + errorView (or default fallback)
 
---- PAGE BINDING ---
+PageMountContext: { model, params, shared, dispatch, root: HTMLElement }
+PageAfterUpdateContext extends PageMountContext + prevModel/prevParams/prevShared
+PageErrorContext: PageRenderContext + { phase, error, root?, prev*? }
 
-PageRoute<Shared>: binding of RouteDef + PageConfig + optional guard
+--- Page binding ---
+
+PageRoute<Shared> = binding of RouteDef + PageConfig + optional guard.
 
 page<Model, Msg, Shared, Params>(
   routeDef: RouteDef<Params>,
   config: PageConfig<Model, Msg, Shared, Params>,
-  options?: { guard?: (params: Params, shared: Shared) => true | string }
+  options?: { guard?: (params: Params, shared: Readonly<Shared>) => true | string },
 ): PageRoute<Shared>
 
-Guard: return true to allow, or a URL string to redirect.
-Guards chain up to 5 levels deep to prevent infinite loops.
+Guard: return true to allow, or a redirect URL string. Guards chain up to 5
+levels deep before falling through to notFound.
 
---- ROUTER ---
+--- Router instance ---
+
+createRouter<Shared>(config: {
+  routes: PageRoute<Shared>[];
+  shared: Shared;
+  notFound?: PageConfig<any, any, Shared, { path: string }>;
+}): Router<Shared>
+
+Router<Shared>:
+  init(url?: URL): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>]
+  update(model, msg): readonly [RouterModel<Shared>, Cmd<RouterMsg<Shared>>]
+  view(model, dispatch): VNode
+  subscriptions(model): Subs<RouterMsg<Shared>>
+  listen(): Sub<RouterMsg<Shared>>                  // popstate, dispatches initial UrlChanged
+  navigate(url, replace?): Effect<RouterMsg<Shared>>
+  updateShared(fn: (s: Shared) => Shared): RouterMsg<Shared>
+  href(routeDef, params): string
+
+RouterMsg<Shared>:
+  | { tag: "@@router/UrlChanged"; url: URL }
+  | { tag: "@@router/PageMsg"; msg: unknown }
+  | { tag: "@@router/UpdateShared"; fn: (s: Shared) => Shared }
 
 RouterModel<Shared>:
   shared: Shared
   url: URL
-  _page: { key: string, model: unknown, routeIdx: number, params: unknown } | null
+  _page: { key, model, routeIdx, params } | null
   _cache: Map<string, unknown>
 
-RouterMsg<Shared>:
-  | { tag: "@@router/UrlChanged", url: URL }
-  | { tag: "@@router/PageMsg", msg: unknown }
-  | { tag: "@@router/UpdateShared", fn: (s: Shared) => Shared }
-
-createRouter<Shared>(config: {
-  routes: PageRoute<Shared>[],
-  shared: Shared,
-  notFound?: PageConfig<any, any, Shared, { path: string }>
-}): Router<Shared>
-
-Router<Shared> interface:
-  init(url?: URL): RouterModel<Shared> | [RouterModel<Shared>, Cmd<RouterMsg<Shared>>]
-  update(model, msg): RouterModel<Shared> | [RouterModel<Shared>, Cmd<RouterMsg<Shared>>]
-  view(model, dispatch): VNode
-  subscriptions(model): Sub<RouterMsg<Shared>>[]
-  listen(): Sub<RouterMsg<Shared>>         — popstate subscription
-  navigate(url, replace?): Effect<RouterMsg<Shared>>
-  updateShared(fn: (s: Shared) => Shared): RouterMsg<Shared>
-  href(routeDef, params): string           — generate URL from route
-
---- routerApp ---
+--- routerApp() — zero-boilerplate ---
 
 routerApp<Shared>(config: {
-  router: Router<Shared>,
-  layout: (content: VNode, shared: Shared, dispatch: Dispatch<RouterMsg<Shared>>) => VNode,
-  node: HTMLElement,
-  debug?: boolean | DebugConfig
+  router: Router<Shared>;
+  layout: (content: VNode, shared: Readonly<Shared>, dispatch: Dispatch<RouterMsg<Shared>>) => VNode;
+  node: HTMLElement;
+  url?: URL;            // bootstrap from a deterministic URL (testing, SSR-like)
+  listen?: boolean;     // default true; false disables popstate listener
+  debug?: boolean | DebugConfig;
 }): AppInstance<{ router: RouterModel<Shared> }, RouterMsg<Shared>>
-
-Zero-boilerplate convenience. Wires router init/update/view/subscriptions into app().
 
 --- routerLink ---
 
-routerLink(url: string): { href: string, onClick: (e: MouseEvent) => void }
-  SPA navigation helper. Spread onto <a> elements.
-  Respects Ctrl/Meta/Shift clicks (opens new tab).
-  Uses pushState + popstate event.
+routerLink(url: string): { href: string; onClick: (e: MouseEvent) => void }
+  SPA navigation. Spread onto an <a>. Respects modifier keys (Ctrl/Meta/Shift +
+  click opens new tab). Uses pushState + popstate.
 
 ================================================================================
-DEBUGGER (superapp/debugger)
+DEBUGGER (teelm/debugger)
 ================================================================================
 
 DebuggerConfig:
@@ -293,37 +606,42 @@ DebuggerConfig:
   width?: string
 
 attachDebugger<S, Msg>(instance: AppInstance<S, Msg>, config?: DebuggerConfig): { destroy: () => void }
-  Attach a floating overlay with state inspection and time-travel controls.
-  Requires debug mode enabled on the app instance (debug: true or { history: true }).
+  Floating overlay with state inspection and time-travel controls. Requires
+  debug: true (or { history: true }) on the app instance.
 
 ================================================================================
-JSX RUNTIME (superapp/jsx-runtime)
+JSX RUNTIME (teelm/jsx-runtime)
 ================================================================================
 
 tsconfig.json:
   "jsx": "react-jsx"
-  "jsxImportSource": "superapp"
+  "jsxImportSource": "teelm"
 
-jsx(tag: string, props: Record<string, any> | null): VNode
+jsx(tag, props): VNode
 jsxs — alias for jsx
 jsxDEV — alias for jsx
-Fragment({ children?: any }): VNode — renders children with empty tag
+Fragment({ children? }): VNode    // empty-string tag; renders children inline
 
 ================================================================================
 COMMON PATTERNS
 ================================================================================
 
 --- Basic TEA app ---
-import { app, h, type Dispatch } from "superapp";
+
+import { app, h, noFx, type Dispatch, type Init, type UpdateResult } from "teelm";
+
 interface State { count: number }
 type Msg = { tag: "Inc" } | { tag: "Dec" };
-const init: State = { count: 0 };
-function update(state: State, msg: Msg): State {
+
+const init: Init<State, Msg> = noFx({ count: 0 });
+
+function update(state: State, msg: Msg): UpdateResult<State, Msg> {
   switch (msg.tag) {
-    case "Inc": return { ...state, count: state.count + 1 };
-    case "Dec": return { ...state, count: state.count - 1 };
+    case "Inc": return noFx({ ...state, count: state.count + 1 });
+    case "Dec": return noFx({ ...state, count: state.count - 1 });
   }
 }
+
 function view(state: State, dispatch: Dispatch<Msg>) {
   return h("div", {},
     h("button", { onClick: () => dispatch({ tag: "Dec" }) }, "-"),
@@ -331,202 +649,442 @@ function view(state: State, dispatch: Dispatch<Msg>) {
     h("button", { onClick: () => dispatch({ tag: "Inc" }) }, "+"),
   );
 }
+
 app({ init, update, view, node: document.getElementById("app")! });
 
---- Effects in update ---
+--- Effects from update ---
+
+import { withFx, noFx } from "teelm";
+import { http, delay, storageSet, storageGet } from "teelm/fx";
+import { Decode } from "teelm/functional";
+
+const userDecoder = Decode.object({ id: Decode.number, name: Decode.string });
+
 function update(state: State, msg: Msg) {
   switch (msg.tag) {
-    case "Save":
-      return withFx(state, storageSet("data", JSON.stringify(state)));
-    case "Load":
-      return withFx(state, storageGet("data", (raw) => ({ tag: "Loaded", raw })));
-    case "FetchData":
-      return withFx({ ...state, loading: true },
-        http({ url: "/api/data", onOk: (d) => ({ tag: "GotData", d }), onError: (e) => ({ tag: "Err", e }) }),
+    case "DelayedInc":
+      return withFx(state, delay(500, { tag: "Inc" }));
+
+    case "FetchUser":
+      return withFx(
+        { ...state, loading: true },
+        http({
+          url: `/api/users/${state.id}`,
+          decoder: userDecoder,
+          toMsg: (r) => r.tag === "Ok"
+            ? { tag: "GotUser", user: r.value }
+            : { tag: "FetchFailed", error: r.error },
+        }),
       );
+
+    case "Save":
+      return withFx(state,
+        storageSet("data", JSON.stringify(state), (r) =>
+          r.tag === "Ok" ? { tag: "Saved" } : { tag: "SaveFailed", error: r.error }),
+      );
+
+    case "Load":
+      return withFx(state,
+        storageGet({
+          key: "data",
+          decoder: Decode.object({ count: Decode.number }),
+          toMsg: (r) => r.tag === "Ok"
+            ? { tag: "Loaded", value: r.value }   // r.value: T | undefined
+            : { tag: "LoadFailed", error: r.error },
+        }),
+      );
+
+    default:
+      return noFx(state);
+  }
+}
+
+--- Pattern matching on HttpError ---
+
+import { HttpError } from "teelm/functional";
+
+case "FetchFailed": {
+  const e = msg.error;
+  switch (e.tag) {
+    case "BadUrl":       return noFx({ ...state, message: `Bad URL: ${e.url}` });
+    case "Timeout":      return noFx({ ...state, message: "Request timed out" });
+    case "NetworkError": return noFx({ ...state, message: e.message });
+    case "BadStatus":    return noFx({ ...state, message: `HTTP ${e.status}` });
+    case "BadBody":      return noFx({ ...state, message: `Decode failed: ${e.reason}` });
   }
 }
 
 --- Conditional subscriptions ---
-function subscriptions(state: State): Sub<Msg>[] {
+
+import { interval, onKeyDown, websocket } from "teelm/subs";
+import type { Subs } from "teelm";
+
+function subscriptions(state: State): Subs<Msg> {
   return [
-    state.auto && interval(1000, { tag: "Tick" }),
     onKeyDown((key) => ({ tag: "Key", key })),
+    state.auto && interval(1000, { tag: "Tick" }),
+    state.wsEnabled && websocket({
+      url: state.wsUrl,
+      onMessage: (data) => ({ tag: "WsMsg", data }),
+    }),
   ];
 }
 
 --- Init with effects ---
-const init: [State, Cmd<Msg>] = [
+
+const init: Init<State, Msg> = [
   { items: [], loading: true },
-  [http({ url: "/api/items", onOk: (d) => ({ tag: "Got", d }), onError: (e) => ({ tag: "Err", e }) })],
+  // batch lifts a list of Effect<Msg> into a Cmd<Msg>:
+  batch([
+    [http({ url: "/api/items", decoder: itemsDecoder,
+            toMsg: (r) => r.tag === "Ok" ? { tag: "Got", items: r.value } : { tag: "Err", e: r.error } })] as Cmd<Msg>,
+  ]),
 ];
 
---- Nested TEA composition ---
-// Child module exports: State, Msg, init, update, view, subscriptions
-// Parent wraps with mapDispatch, mapEffect, mapSub
-type ParentMsg = { tag: "Child"; msg: Child.Msg };
-// View: Child.view(state.child, mapDispatch(dispatch, (m) => ({ tag: "Child", msg: m })))
-// Update: map child result with mapEffect
-// Subs: Child.subscriptions(state.child).map(s => mapSub(s, (m) => ({ tag: "Child", msg: m })))
+// Or, more idiomatically, use withFx:
+import { withFx } from "teelm";
+const init2: Init<State, Msg> = withFx(
+  { items: [], loading: true },
+  http({
+    url: "/api/items",
+    decoder: itemsDecoder,
+    toMsg: (r) => r.tag === "Ok" ? { tag: "Got", items: r.value } : { tag: "Err", e: r.error },
+  }),
+);
 
---- Router page with fetch ---
+--- Nested TEA composition ---
+
+import { mapDispatch, mapCmd } from "teelm";
+import * as Counter from "./counter";
+
+type Msg = { tag: "Child"; msg: Counter.Msg };
+
+// In view:
+Counter.view(
+  state.child,
+  mapDispatch(dispatch, (m: Counter.Msg): Msg => ({ tag: "Child", msg: m })),
+);
+
+// In update — lift the child's Cmd:
+case "Child": {
+  const [childState, childCmd] = Counter.update(state.child, msg.msg);
+  return [
+    { ...state, child: childState },
+    mapCmd(childCmd, (m): Msg => ({ tag: "Child", msg: m })),
+  ];
+}
+
+// In subscriptions — lift each child sub:
+function subscriptions(state: State): Subs<Msg> {
+  return Counter.subscriptions(state.child).map((s) =>
+    mapSub(s, (m: Counter.Msg): Msg => ({ tag: "Child", msg: m })),
+  );
+}
+
+--- Router page with fetch and caching ---
+
+import { noFx, withFx, h, type Dispatch } from "teelm";
+import { http } from "teelm/fx";
+import { Decode } from "teelm/functional";
+import { type PageConfig } from "teelm/router";
+import type { Shared } from "../shared";
+
+interface User { id: number; name: string }
+interface Model { id: number; user: User | null; loading: boolean; error: string | null }
+type Msg =
+  | { tag: "GotUser"; user: User }
+  | { tag: "FetchFailed"; error: string };
+
+const userDecoder = Decode.object({ id: Decode.number, name: Decode.string });
+
 export const page: PageConfig<Model, Msg, Shared, { id: number }> = {
-  init: (params) => [
-    { id: params.id, data: null, loading: true },
-    [http({ url: `/api/items/${params.id}`, onOk: (d) => ({ tag: "Got", d }), onError: (e) => ({ tag: "Err", e }) })],
-  ],
-  update: (model, msg) => { /* handle Got, Err */ },
-  view: (model, shared, dispatch) => { /* render */ },
+  init: (params) => withFx(
+    { id: params.id, user: null, loading: true, error: null },
+    http({
+      url: `/api/users/${params.id}`,
+      decoder: userDecoder,
+      toMsg: (r) => r.tag === "Ok"
+        ? { tag: "GotUser", user: r.value }
+        : { tag: "FetchFailed", error: HttpError.toString(r.error) },
+    }),
+  ),
+
+  update: (model, msg) => {
+    switch (msg.tag) {
+      case "GotUser":     return noFx({ ...model, user: msg.user, loading: false });
+      case "FetchFailed": return noFx({ ...model, error: msg.error, loading: false });
+    }
+  },
+
+  view: (model) => {
+    if (model.loading) return h("p", {}, "Loading…");
+    if (model.error)   return h("p", { class: "error" }, model.error);
+    return h("h1", {}, model.user!.name);
+  },
+
   save: (model) => model,
-  load: (saved) => saved as Model,
+  load: (saved) => noFx(saved as Model),
 };
 
 --- Page with guard ---
+
 page(route("/admin"), adminPage, {
-  guard: (params, shared) => shared.isLoggedIn ? true : "/login",
+  guard: (params, shared) => shared.user?.isAdmin === true ? true : "/login",
 })
 
---- Keyed list rendering ---
-h("ul", {},
-  ...state.items.map(item =>
-    h("li", { key: item.id }, item.name)
-  ),
-)
+--- Tasks for chained async ---
+
+import { Task } from "teelm/task";
+import { withFx } from "teelm";
+
+const fetchAuth = Task.fromPromise<AuthFailed, { token: string }>(
+  () => fetch("/api/auth").then(r => r.json()),
+  (e) => ({ tag: "AuthFailed", message: String(e) }),
+);
+
+const fetchProfile = (token: string) => Task.fromPromise<ProfileFailed, Profile>(
+  () => fetch(`/api/me?t=${token}`).then(r => r.json()),
+  (e) => ({ tag: "ProfileFailed", message: String(e) }),
+);
+
+const loadProfile = Task.andThen(
+  Task.mapError(fetchAuth, (e): AppError => ({ kind: "auth", error: e })),
+  ({ token }) => Task.mapError(fetchProfile(token), (e): AppError => ({ kind: "profile", error: e })),
+);
+
+case "Boot":
+  return withFx(state, Task.attempt(loadProfile, (r) => ({ tag: "ProfileLoaded", r })));
+
+--- Typed events ---
+
+import { makeEvents } from "teelm/events";
+
+function view(state: State, dispatch: Dispatch<Msg>) {
+  const E = makeEvents(dispatch);
+  return h("form", E.onSubmit({ tag: "Save" }),
+    h("input", {
+      type: "text",
+      value: state.name,
+      ...E.onInput((value) => ({ tag: "SetName", value })),
+      ...E.onEnter({ tag: "Save" }),
+    }),
+    h("label", {},
+      h("input", { type: "checkbox", checked: state.opt, ...E.onChecked((c) => ({ tag: "ToggleOpt", on: c })) }),
+      h("span", {}, "Opt-in"),
+    ),
+    h("button", { type: "submit" }, "Save"),
+  );
+}
+
+--- Custom effect (branding via `as Effect<Msg>` is not needed — Effect is unbranded) ---
+
+import type { Dispatch, Effect } from "teelm";
+
+function clipboardWriteFx<Msg>(
+  dispatch: Dispatch<Msg>,
+  props: { text: string; toMsg: (r: Result<undefined, string>) => Msg },
+): void {
+  navigator.clipboard.writeText(props.text)
+    .then(() => dispatch(props.toMsg(Result.ok(undefined))))
+    .catch((e) => dispatch(props.toMsg(Result.err(String(e)))));
+}
+
+export function clipboardWrite<Msg>(
+  text: string,
+  toMsg: (r: Result<undefined, string>) => Msg,
+): Effect<Msg, { text: string; toMsg: (r: Result<undefined, string>) => Msg }> {
+  return [clipboardWriteFx, { text, toMsg }];
+}
+
+--- Custom subscription (Sub<Msg> is branded — use the helper pattern) ---
+
+import type { Dispatch, Sub, SubFn } from "teelm";
+
+function visibilitySub<Msg>(
+  dispatch: Dispatch<Msg>,
+  props: { msg: (visible: boolean) => Msg },
+): () => void {
+  const handler = () => dispatch(props.msg(!document.hidden));
+  document.addEventListener("visibilitychange", handler);
+  return () => document.removeEventListener("visibilitychange", handler);
+}
+
+// Cast to Sub<Msg, P> — the only way to brand a tuple as a Sub.
+export function onVisibilityChange<Msg>(
+  msg: (visible: boolean) => Msg,
+): Sub<Msg, { msg: (visible: boolean) => Msg }> {
+  return [visibilitySub as SubFn<Msg, { msg: (visible: boolean) => Msg }>, { msg }] as unknown as Sub<Msg, { msg: (visible: boolean) => Msg }>;
+}
 
 --- Class prop variants ---
+
 h("div", { class: "foo bar" })
 h("div", { class: ["foo", condition && "bar"] })
 h("div", { class: { foo: true, bar: isActive } })
 
---- Custom effect ---
-function myEffectFx<Msg>(dispatch: Dispatch<Msg>, props: { onDone: (result: string) => Msg }): void {
-  someAsyncWork().then((result) => dispatch(props.onDone(result)));
-}
-export function myEffect<Msg>(onDone: (result: string) => Msg): Effect<Msg> {
-  return [myEffectFx, { onDone }];
-}
+--- Keyed list rendering ---
 
---- Custom subscription ---
-function mySub<Msg>(dispatch: Dispatch<Msg>, props: { msg: (data: string) => Msg }): () => void {
-  const handler = (e: SomeEvent) => dispatch(props.msg(e.data));
-  someTarget.addEventListener("someevent", handler);
-  return () => someTarget.removeEventListener("someevent", handler);
-}
-export function onMyEvent<Msg>(msg: (data: string) => Msg): Sub<Msg> {
-  return [mySub, { msg }];
-}
+h("ul", {},
+  ...state.items.map((item) =>
+    h("li", { key: item.id }, item.name),
+  ),
+)
 
 ================================================================================
 CLI COMMANDS
 ================================================================================
 
-superapp new <name> [--jsx]
+teelm new <name> [--jsx]
   Scaffold new project. Generates: index.html, package.json, tsconfig.json,
-  vite.config.ts, src/main.ts, src/shared.ts, src/app.css, src/pages/{Home,About,NotFound}.ts,
-  src/generated/router.ts. With --jsx generates .tsx files.
+  vite.config.ts, src/main.ts(x), src/shared.ts, src/app.css,
+  src/pages/{Home,About,NotFound}.ts(x), src/generated/router.ts.
 
-superapp add <pattern> [--jsx]
-  Add a page file to src/pages/ and auto-run gen.
-  Pattern syntax:
-    "About"              → src/pages/About.ts, route: /about
-    "Home"               → src/pages/Home.ts, route: /
-    "NotFound"           → src/pages/NotFound.ts, 404 handler
-    "users/[id]"         → src/pages/users/[id].ts, route: /users/:id (string)
-    "users/[id:int]"     → src/pages/users/[id:int].ts, route: /users/:id (integer)
-    "users/[id]/Edit"    → src/pages/users/[id]/Edit.ts, route: /users/:id/edit
-    "Blog/Index"         → src/pages/Blog/Index.ts, route: /blog
+teelm add <pattern> [--jsx]
+  Add a page file under src/pages/ and run gen.
+    "About"              → src/pages/About.ts,         route /about
+    "Home"               → src/pages/Home.ts,          route /
+    "NotFound"           → src/pages/NotFound.ts,      404 handler
+    "users/[id]"         → src/pages/users/[id].ts,    /users/:id (string)
+    "users/[id:int]"     → src/pages/users/[id:int].ts /users/:id (int)
+    "users/[id:float]"   → src/pages/users/[id:float].ts /users/:id (float)
+    "users/[id]/Edit"    → src/pages/users/[id]/Edit.ts /users/:id/edit
+    "Blog/Index"         → src/pages/Blog/Index.ts     /blog
 
-superapp gen
-  Scan src/pages/, generate src/generated/router.ts.
-  Sorts: static before dynamic, more segments first, alphabetical tiebreak.
+  Generated page scaffold uses tuple-only init/update:
+    export const page: PageConfig<{}, never, Shared, {}> = {
+      init: () => noFx({}),
+      update: (model) => noFx(model),
+      view: (model, shared) => h("div", { class: "..." }, h("h1", {}, "/about")),
+    };
 
-superapp dev
-  Run gen, then start Vite dev server (npx vite).
+teelm gen
+  Scan src/pages/, regenerate src/generated/router.ts.
+  Sort: static before dynamic, more segments first, alphabetical tiebreak.
 
-superapp build
-  Run gen, then run Vite production build (npx vite build).
+teelm dev
+  Run gen, then start `npx vite` (HMR).
+
+teelm build
+  Run gen, then run `npx vite build`.
 
 ================================================================================
 FILE CONVENTIONS FOR PAGES
 ================================================================================
 
 Directory: src/pages/
-Each file must export: export const page: PageConfig<Model, Msg, Shared, Params>
+Each page must export:  export const page: PageConfig<Model, Msg, Shared, Params>
 
-File naming → route mapping:
-  Home.ts           → /
-  About.ts          → /about
-  NotFound.ts       → 404 handler (not a route)
-  UserProfile.ts    → /user-profile (CamelCase → kebab-case)
-  Blog/Index.ts     → /blog (Index maps to parent)
-  users/[id].ts     → /users/:id (string param)
-  users/[id:int].ts → /users/:id (integer param)
-  [slug].ts         → /:slug
+File naming → route:
+  Home.ts            → /                  (special)
+  About.ts           → /about
+  NotFound.ts        → 404 handler         (special)
+  UserProfile.ts     → /user-profile       (CamelCase → kebab-case)
+  Blog/Index.ts      → /blog               (Index maps to parent)
+  users/Index.ts     → /users
+  users/[id].ts      → /users/:id          (string)
+  users/[id:int].ts  → /users/:id          (integer)
+  users/[id:float].ts→ /users/:id          (float)
+  [slug].ts          → /:slug
 
-Import name generation:
-  Home.ts           → Home
-  users/[id].ts     → UsersId
-  users/[id]/Edit   → UsersIdEdit
+Ignored by `teelm gen`:
+  - files and folders prefixed with `_`
+  - *.component.ts(x)
+  - *.test.ts(x), *.spec.ts(x), *.d.ts
+  - patterns from project-root .teelmignore
+  - lowercase index.ts(x) is supported as an entrypoint
 
-Generated router imports from "../shared" expecting:
-  export interface Shared { ... }
-  export const initialShared: Shared = { ... }
+Generated router imports:
+  from "../shared":  Shared (type) and initialShared (value)
 
 ================================================================================
 COMMON MISTAKES AND FIXES
 ================================================================================
 
+MISTAKE: Returning a bare state from update or init
+  return { ...state, count: state.count + 1 };  // type error: not a tuple
+FIX: Always wrap with noFx or withFx
+  return noFx({ ...state, count: state.count + 1 });
+
+MISTAKE: Forgetting to return both branches of a switch via noFx/withFx
+  case "Inc": return noFx({ ...state, count: state.count + 1 });
+  case "FetchUser":
+    return { ...state, loading: true };  // type error
+FIX:
+  case "FetchUser":
+    return withFx({ ...state, loading: true }, http({ ... }));
+
+MISTAKE: Using a raw [fn, props] tuple where Sub<Msg> is required
+  subscriptions: () => [[myRunner, { ms: 1000 }]]   // type error: not branded
+FIX: Use a sub creator from teelm/subs, or build your own helper that
+  casts through Sub<Msg, P> (see "Custom subscription" pattern). Same goes
+  for Cmd<Msg> — only the public helpers (none, withFx, batch, mapCmd,
+  mapEffect) produce a value of that type.
+
+MISTAKE: Typing subscriptions as Sub<Msg>[]
+  function subscriptions(s: State): Sub<Msg>[] { ... }   // wrong
+FIX: Use Subs<Msg>, which permits falsy entries:
+  function subscriptions(s: State): Subs<Msg> { return [s.auto && interval(...), ...]; }
+
+MISTAKE: Returning null from update to "destroy" the app
+  if (msg.tag === "Quit") return null;   // not supported
+FIX: Call instance.destroy() on the AppInstance returned from app().
+
+MISTAKE: Using the old http() onOk/onError shape
+  http({ url, onOk: (d) => ..., onError: (e) => ... })   // type error
+FIX: Use decoder + toMsg with a Result<T, HttpError>:
+  http({
+    url,
+    decoder: Decode.object({ ... }),
+    toMsg: (r) => r.tag === "Ok" ? { tag: "Got", v: r.value } : { tag: "Err", e: r.error },
+  })
+
+MISTAKE: Using the old storageGet(key, callback) shape
+  storageGet("k", (raw) => ({ tag: "Got", raw }))        // type error
+FIX:
+  storageGet({
+    key: "k",
+    decoder: Decode.string,
+    toMsg: (r) => r.tag === "Ok" ? { tag: "Got", value: r.value } : { tag: "Err", e: r.error },
+  })
+
 MISTAKE: Mutating state directly
-  state.count += 1;  // WRONG — state is frozen in debug mode
-FIX: Always return new objects
-  return { ...state, count: state.count + 1 };
+  state.count += 1;   // throws — state is deep-frozen
+FIX: Always return a new object:
+  return noFx({ ...state, count: state.count + 1 });
 
-MISTAKE: Returning effects without state
-  return delay(500, { tag: "Tick" });
-FIX: Use withFx to pair state with effects
-  return withFx(state, delay(500, { tag: "Tick" }));
-
-MISTAKE: Forgetting to convert numbers to strings in h()
-  h("span", {}, state.count);  // count is number, renders as VNode child fine
-NOTE: Actually this works — h() auto-converts numbers to text nodes.
-
-MISTAKE: Using navigate() from superapp/fx and expecting router to pick it up without popstate
-NOTE: navigate() already dispatches a popstate event. This just works.
-
-MISTAKE: Not spreading routerLink
-  h("a", { routerLink("/about") })  // WRONG
-FIX: Spread the result
-  h("a", { ...routerLink("/about") })
-
-MISTAKE: Subscription position instability
-  Changing the ORDER of subscriptions in the array causes teardown/restart.
-FIX: Keep subscriptions in a stable order. Use falsy values for inactive ones
-  (e.g., false && interval(...)) so the array positions stay consistent.
+MISTAKE: Subscription order changes cause unintended teardown
+  Reordering subscriptions in the array tears down + restarts existing subs.
+FIX: Keep positions stable. Use falsy entries (`cond && interval(...)`) to
+  toggle subs in place rather than splicing them in/out.
 
 MISTAKE: Using onUrlChange with routerApp
-  routerApp already listens for URL changes via router.listen().
-FIX: Only use onUrlChange for manual (non-routerApp) setups.
+  routerApp already listens via router.listen(); double-listening dispatches twice.
+FIX: Only use onUrlChange for manual setups (no routerApp).
 
 MISTAKE: Editing src/generated/router.ts manually
-  It will be overwritten by gen.
-FIX: Edit page files in src/pages/ and run superapp gen.
+  It is overwritten by `teelm gen`.
+FIX: Edit page files in src/pages/ and re-run gen.
 
-MISTAKE: Page file doesn't export "page"
-  export default { init, update, view };  // WRONG
-FIX: Use named export
+MISTAKE: Page file uses default export
+  export default { init, update, view };   // not picked up
+FIX: Named export:
   export const page: PageConfig<...> = { init, update, view };
 
-MISTAKE: Passing raw Msg objects as subscriptions
-  [{ tag: "Tick" }]  // WRONG — this is not a Sub
-FIX: Use subscription creators that return [SubFn, props] tuples
-  [interval(1000, { tag: "Tick" })]
-
-MISTAKE: Guard returning false instead of redirect URL
-  guard: (params, shared) => shared.isAdmin  // returns boolean
-FIX: Return true or a URL string
-  guard: (params, shared) => shared.isAdmin ? true : "/login"
+MISTAKE: Guard returning a boolean
+  guard: (params, shared) => shared.isAdmin   // returns boolean
+FIX: Return true OR a redirect URL string:
+  guard: (p, s) => s.isAdmin ? true : "/login"
 
 MISTAKE: Infinite guard redirect loop
-  Page A guards to B, B guards to A
-FIX: Guards chain up to 5 levels max, then falls through to notFound.
-  Design guard logic to avoid cycles.
+  Guards chain at most 5 levels before falling through to notFound.
+FIX: Design guard logic so cycles are impossible.
+
+MISTAKE: Not spreading routerLink
+  h("a", { routerLink("/about") })   // wrong — routerLink returns an object
+FIX:
+  h("a", { ...routerLink("/about") }, "About")
+
+MISTAKE: Building a Decoder<T> by hand for everything
+  Decoders compose. Prefer Decode.object / Decode.array / Decode.field /
+  Decode.optional / Decode.oneOf / Decode.map / Decode.andThen over inlining
+  manual checks.
