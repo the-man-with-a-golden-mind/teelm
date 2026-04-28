@@ -246,7 +246,7 @@ export async function run(_args: string[]) {
 
   fs.mkdirSync(outDir, { recursive: true });
   const code = generateRouter(entries);
-  await Bun.write(outFile, code);
+  fs.writeFileSync(outFile, code);
 
   const routeCount = entries.filter((e) => !e.isNotFound).length;
   const rel = path.relative(projectDir, outFile);

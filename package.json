@@ -3,26 +3,31 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/teelm.ts",
-    "./fx": "./src/fx.ts",
-    "./subs": "./src/subs.ts",
-    "./debugger": "./src/debugger.ts",
-    "./router": "./src/router.ts",
-    "./jsx-runtime": "./src/jsx-runtime.ts",
-    "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
-    "./testing": "./src/testing.ts",
-    "./functional": "./src/functional.ts",
-    "./task": "./src/task.ts",
-    "./events": "./src/events.ts"
+    ".": "./dist/teelm.js",
+    "./fx": "./dist/fx.js",
+    "./subs": "./dist/subs.js",
+    "./debugger": "./dist/debugger.js",
+    "./router": "./dist/router.js",
+    "./jsx-runtime": "./dist/jsx-runtime.js",
+    "./jsx-dev-runtime": "./dist/jsx-dev-runtime.js",
+    "./testing": "./dist/testing.js",
+    "./functional": "./dist/functional.js",
+    "./task": "./dist/task.js",
+    "./events": "./dist/events.js"
   },
   "bin": {
-    "teelm": "./cli/index.ts"
+    "teelm": "./dist/cli/index.js"
   },
   "main": "./dist/teelm.js",
   "types": "./dist/teelm.d.ts",
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src",
+    "cli"
+  ],
   "scripts": {
-    "build": "rm -rf dist && bun build src/teelm.ts src/fx.ts src/subs.ts src/debugger.ts src/router.ts src/jsx-runtime.ts src/jsx-dev-runtime.ts src/testing.ts src/functional.ts src/task.ts src/events.ts --root src --outdir dist --format esm --target browser && tsc --project tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/teelm.ts src/fx.ts src/subs.ts src/debugger.ts src/router.ts src/jsx-runtime.ts src/jsx-dev-runtime.ts src/testing.ts src/functional.ts src/task.ts src/events.ts --root src --outdir dist --format esm --target browser && bun build cli/index.ts cli/new.ts cli/add-page.ts cli/gen.ts cli/dev-build.ts --root cli --outdir dist/cli --format esm --target node && tsc --project tsconfig.build.json",
+    "prepublishOnly": "bun run build",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "bench": "bun run scripts/benchmark.ts"

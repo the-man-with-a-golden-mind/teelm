@@ -138,7 +138,7 @@ export async function run(args: string[]) {
     ? generatePageTsx(routePath, params, filePath)
     : generatePageTs(routePath, params, filePath);
 
-  await Bun.write(fullPath, content);
+  fs.writeFileSync(fullPath, content);
   const rel = path.relative(process.cwd(), fullPath);
   console.log(`  ${green("+")} ${rel}  (route: ${routePath})`);
 

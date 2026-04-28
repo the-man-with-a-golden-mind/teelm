@@ -1,21 +1,21 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 const [cmd, ...args] = process.argv.slice(2);
 
 switch (cmd) {
   case "new":
-    await import("./new").then((m) => m.run(args));
+    await import("./new.js").then((m) => m.run(args));
     break;
   case "add":
-    await import("./add-page").then((m) => m.run(args));
+    await import("./add-page.js").then((m) => m.run(args));
     break;
   case "gen":
-    await import("./gen").then((m) => m.run(args));
+    await import("./gen.js").then((m) => m.run(args));
     break;
   case "dev":
-    await import("./dev-build").then((m) => m.run("dev"));
+    await import("./dev-build.js").then((m) => m.run("dev"));
     break;
   case "build":
-    await import("./dev-build").then((m) => m.run("build"));
+    await import("./dev-build.js").then((m) => m.run("build"));
     break;
   default:
     console.log(`

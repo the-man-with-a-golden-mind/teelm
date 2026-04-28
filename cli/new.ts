@@ -7,7 +7,7 @@ const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 function write(filePath: string, content: string) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  Bun.write(filePath, content);
+  fs.writeFileSync(filePath, content);
   const rel = path.relative(process.cwd(), filePath);
   console.log(`  ${green("+")} ${rel}`);
 }
@@ -294,6 +294,14 @@ export const page: PageConfig<{ path: string }, never, Shared, { path: string }>
 `;
 }
 
+function gitignore(): string {
+  return `node_modules
+dist
+.DS_Store
+*.local
+`;
+}
+
 // ── Command ──────────────────────────────────────────────────────
 
 export async function run(args: string[]) {
@@ -315,6 +323,7 @@ export async function run(args: string[]) {
 
   console.log(`\nCreating ${bold(name)}...\n`);
 
+  write(path.join(root, ".gitignore"), gitignore());
   write(path.join(root, "index.html"), indexHtml(name));
   write(path.join(root, "src", "app.css"), appCss());
   write(path.join(root, "package.json"), packageJson(name));
