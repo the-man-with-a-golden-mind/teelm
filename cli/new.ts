@@ -167,13 +167,51 @@ function homePageTs(): string {
 import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
-export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => noFx({}),
-  update: (model) => noFx(model),
-  view: (_model, shared) =>
+interface Model {
+  count: number;
+}
+
+type Msg =
+  | { tag: "Inc" }
+  | { tag: "Dec" }
+  | { tag: "Reset" };
+
+export const page: PageConfig<Model, Msg, Shared, {}> = {
+  init: () => noFx({ count: 0 }),
+
+  update: (model, msg) => {
+    switch (msg.tag) {
+      case "Inc":   return noFx({ ...model, count: model.count + 1 });
+      case "Dec":   return noFx({ ...model, count: model.count - 1 });
+      case "Reset": return noFx({ ...model, count: 0 });
+      default: {
+        // Exhaustiveness check — adding a new Msg variant without handling it
+        // here will fail to compile.
+        const _exhaustive: never = msg;
+        return noFx(model);
+      }
+    }
+  },
+
+  view: (model, shared, dispatch) =>
     h("div", { class: "text-center py-16" },
       h("h1", { class: "text-4xl font-bold mb-4" }, \`Welcome to \${shared.appName}\`),
       h("p", { class: "text-gray-500 mb-8" }, "Built with Teelm — Elm-inspired TypeScript framework"),
+      h("div", { class: "flex items-center justify-center gap-4 mb-8" },
+        h("button", {
+          onClick: () => dispatch({ tag: "Dec" }),
+          class: "px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300",
+        }, "−"),
+        h("span", { class: "text-3xl font-mono w-16 tabular-nums" }, String(model.count)),
+        h("button", {
+          onClick: () => dispatch({ tag: "Inc" }),
+          class: "px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300",
+        }, "+"),
+        h("button", {
+          onClick: () => dispatch({ tag: "Reset" }),
+          class: "px-3 py-2 text-sm text-gray-500 hover:text-gray-700",
+        }, "reset"),
+      ),
       h("a", {
         ...routerLink("/about"),
         class: "inline-block px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 no-underline",
@@ -188,13 +226,57 @@ function homePageTsx(): string {
 import { routerLink, type PageConfig } from "teelm/router";
 import type { Shared } from "../shared";
 
-export const page: PageConfig<{}, never, Shared, {}> = {
-  init: () => noFx({}),
-  update: (model) => noFx(model),
-  view: (_model, shared) => (
+interface Model {
+  count: number;
+}
+
+type Msg =
+  | { tag: "Inc" }
+  | { tag: "Dec" }
+  | { tag: "Reset" };
+
+export const page: PageConfig<Model, Msg, Shared, {}> = {
+  init: () => noFx({ count: 0 }),
+
+  update: (model, msg) => {
+    switch (msg.tag) {
+      case "Inc":   return noFx({ ...model, count: model.count + 1 });
+      case "Dec":   return noFx({ ...model, count: model.count - 1 });
+      case "Reset": return noFx({ ...model, count: 0 });
+      default: {
+        // Exhaustiveness check — adding a new Msg variant without handling it
+        // here will fail to compile.
+        const _exhaustive: never = msg;
+        return noFx(model);
+      }
+    }
+  },
+
+  view: (model, shared, dispatch) => (
     <div class="text-center py-16">
       <h1 class="text-4xl font-bold mb-4">Welcome to {shared.appName}</h1>
       <p class="text-gray-500 mb-8">Built with Teelm — Elm-inspired TypeScript framework</p>
+      <div class="flex items-center justify-center gap-4 mb-8">
+        <button
+          onClick={() => dispatch({ tag: "Dec" })}
+          class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+        >
+          −
+        </button>
+        <span class="text-3xl font-mono w-16 tabular-nums">{model.count}</span>
+        <button
+          onClick={() => dispatch({ tag: "Inc" })}
+          class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+        >
+          +
+        </button>
+        <button
+          onClick={() => dispatch({ tag: "Reset" })}
+          class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+        >
+          reset
+        </button>
+      </div>
       <a {...routerLink("/about")} class="inline-block px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 no-underline">
         Learn More
       </a>
