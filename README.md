@@ -2,7 +2,7 @@
 
 **Teelm: The Functional Elm-inspired TypeScript framework**
 
-[![version](https://img.shields.io/badge/version-0.1.1-blue)](https://github.com/nickabal/teelm)
+[![version](https://img.shields.io/badge/version-0.1.2-blue)](https://github.com/nickabal/teelm)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6)](https://www.typescriptlang.org/)
 [![tests](https://img.shields.io/badge/tests-bun%20test-yellow)](https://bun.sh)
