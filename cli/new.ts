@@ -14,7 +14,7 @@ function write(filePath: string, content: string) {
 
 // ── Templates ────────────────────────────────────────────────────
 
-function indexHtml(name: string): string {
+function indexHtml(name: string, ext: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,7 +25,7 @@ function indexHtml(name: string): string {
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
   <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="/src/main${ext}"></script>
 </body>
 </html>
 `;
@@ -324,7 +324,7 @@ export async function run(args: string[]) {
   console.log(`\nCreating ${bold(name)}...\n`);
 
   write(path.join(root, ".gitignore"), gitignore());
-  write(path.join(root, "index.html"), indexHtml(name));
+  write(path.join(root, "index.html"), indexHtml(name, ext));
   write(path.join(root, "src", "app.css"), appCss());
   write(path.join(root, "package.json"), packageJson(name));
   write(path.join(root, "tsconfig.json"), tsconfigJson());
